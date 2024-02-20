@@ -11,7 +11,7 @@ import torch
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from utils.scheduler import GradualWarmupScheduler, CosineDecayWithWarmUpScheduler
-from model.TMT_MS import TMT_MS
+from model.TMT import TMT_MS
 import utils.losses as losses
 from utils import utils_image as util
 from utils.general import create_log_folder, get_cuda_info, find_latest_checkpoint

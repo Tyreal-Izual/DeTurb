@@ -468,7 +468,7 @@ if __name__ == '__main__':
     from torchsummary import summary
     from PIL import Image
     import torchvision.transforms.functional as TF
-    from UNet3d import DetiltUNet3D
+    from UNet3d_TMT import DetiltUNet3D
     import cv2
     import time
     from fvcore.nn import FlopCountAnalysis, flop_count_table

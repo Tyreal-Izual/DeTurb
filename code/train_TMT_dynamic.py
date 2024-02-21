@@ -46,7 +46,7 @@ def main():
         result_img_path, path_ckpt, path_scipts = create_log_folder(run_path)
     logging.basicConfig(filename=f'{run_path}/recording.log', \
                         level=logging.INFO, format='%(levelname)s: %(message)s')
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    # device = torch.device('cpu' if torch.cuda.is_available() else 'cpu')
     gpu_count = torch.cuda.device_count()
     get_cuda_info(logging)
     

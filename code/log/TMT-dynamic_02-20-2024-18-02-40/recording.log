@@ -1,0 +1,13 @@
+INFO: __CUDNN VERSION: 8801
+__Number CUDA Devices: 1
+__CUDA Device Name: NVIDIA GeForce RTX 4090
+__CUDA Device Total Memory [GB]: 23.98779296875
+INFO: Starting training:
+        Total_iters:     400000
+        Start_iters:     1
+        Batch size:      1
+        Learning rate:   0.0001
+        Training size:   3500
+        Validation size: 1184
+        Checkpoints:     C:\Users\Zouzh\Desktop\IP\code\log\TMT-dynamic_02-20-2024-18-02-40\checkpoints
+    

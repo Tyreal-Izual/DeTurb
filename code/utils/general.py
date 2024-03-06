@@ -42,15 +42,28 @@ def load_checkpoint(model, weights):
     return checkpoint, model
     
 
+# def get_cuda_info(logger):
+#     cudnn_version = torch.backends.cudnn.version()
+#     count = torch.cuda.device_count()
+#     device_name_0 = torch.cuda.get_device_name(0)
+#     memory_0 = torch.cuda.get_device_properties(0).total_memory/(1024**3)
+#
+#     logger.info(f'__CUDNN VERSION: {cudnn_version}\n'
+#         f'__Number CUDA Devices: {count}\n'
+#         f'__CUDA Device Name: {device_name_0}\n'
+#         f'__CUDA Device Total Memory [GB]: {memory_0}')
+#
+#
 def get_cuda_info(logger):
     cudnn_version = torch.backends.cudnn.version()
     count = torch.cuda.device_count()
-    device_name_0 = torch.cuda.get_device_name(0)
-    memory_0 = torch.cuda.get_device_properties(0).total_memory/(1024**3)
 
     logger.info(f'__CUDNN VERSION: {cudnn_version}\n'
-        f'__Number CUDA Devices: {count}\n'
-        f'__CUDA Device Name: {device_name_0}\n'
-        f'__CUDA Device Total Memory [GB]: {memory_0}')
-    
+                f'__Number CUDA Devices: {count}')
 
+    for device_id in range(count):
+        device_name = torch.cuda.get_device_name(device_id)
+        memory = torch.cuda.get_device_properties(device_id).total_memory / (1024 ** 3)
+
+        logger.info(f'__CUDA Device {device_id} Name: {device_name}\n'
+                    f'__CUDA Device {device_id} Total Memory [GB]: {memory}')

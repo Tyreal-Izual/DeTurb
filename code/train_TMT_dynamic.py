@@ -22,6 +22,7 @@ def get_args():
     parser.add_argument('--iters', type=int, default=400000, help='Number of iterations for each period')
     parser.add_argument('--batch-size', '-b', dest='batch_size', metavar='B', type=int, default=1, help='Batch size')
     parser.add_argument('--patch-size', '-ps', dest='patch_size', type=int, default=240, help='Batch size')
+    parser.add_argument('--log-frequency', type=int, default=1, help='Frequency of logging information')
     parser.add_argument('--print-period', '-pp', dest='print_period', type=int, default=1000, help='number of iterations to save checkpoint')
     parser.add_argument('--val-period', '-vp', dest='val_period', type=int, default=5000, help='number of iterations for validation')
     parser.add_argument('--learning-rate', '-l', metavar='LR', type=float, default=0.0001, help='Learning rate', dest='lr')
@@ -66,7 +67,7 @@ def main():
     warmup_iter = 10000
     scheduler_cosine = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, total_iters-warmup_iter, eta_min=1e-6)
     scheduler = GradualWarmupScheduler(optimizer, multiplier=1, total_epoch=warmup_iter, after_scheduler=scheduler_cosine)
-    scheduler.step()
+    # scheduler.step() # Comment out for error code: UserWarning: Detected call of `lr_scheduler.step()` before `optimizer.step()`. In PyTorch 1.1.0 and later, you should call them in the opposite order: `optimizer.step()` before `lr_scheduler.step()`.  Failure to do this will result in PyTorch skipping the first value of the learning rate schedule. See more details at https://pytorch.org/docs/stable/optim.html#how-to-adjust-learning-ratewarnings.warn("Detected call of `lr_scheduler.step()` before `optimizer.step()`. "
     
     ######### Resume ###########
     if args.load:
@@ -185,13 +186,21 @@ def main():
             # s4 = time.time()
             # logging.info(f'img: {s4-s3}, backward: {s3-s2}, forward:{s2-s1}, data: {s1-s0}')
             # s0 = time.time()
+
+            if iter_count % args.log_frequency == 0:
+                psnr = sum(train_results_folder['psnr']) / len(train_results_folder['psnr'])
+                ssim = sum(train_results_folder['ssim']) / len(train_results_folder['ssim'])
+                logging.info('Training: iters {:d}/{:d} -Time:{:.6f} -LR:{:.7f} -Loss {:8f} -PSNR: {:.2f} dB; SSIM: {:.4f}'.format(iter_count, total_iters, time.time()-current_start_time, optimizer.param_groups[0]['lr'], current_loss/args.print_period, psnr, ssim))
+
+                current_loss = 0
+
             if iter_count>start_iter and iter_count % args.print_period == 0:
                 psnr = sum(train_results_folder['psnr']) / len(train_results_folder['psnr'])
                 ssim = sum(train_results_folder['ssim']) / len(train_results_folder['ssim'])
-                # psnr_y = sum(train_results_folder['psnr_y']) / len(train_results_folder['psnr_y'])
-                # ssim_y = sum(train_results_folder['ssim_y']) / len(train_results_folder['ssim_y'])
-                # logging.info('Training: iters {:d}/{:d} -Time:{:.6f} -LR:{:.7f} -Loss {:8f} -PSNR: {:.2f} dB; SSIM: {:.4f}; PSNR_Y: {:.2f} dB; SSIM_Y: {:.4f}'.format(iter_count, total_iters, time.time()-current_start_time, optimizer.param_groups[0]['lr'], current_loss/args.print_period, psnr, ssim, psnr_y, ssim_y))
-                logging.info('Training: iters {:d}/{:d} -Time:{:.6f} -LR:{:.7f} -Loss {:8f} -PSNR: {:.2f} dB; SSIM: {:.4f}'.format(iter_count, total_iters, time.time()-current_start_time, optimizer.param_groups[0]['lr'], current_loss/args.print_period, psnr, ssim))
+                ## psnr_y = sum(train_results_folder['psnr_y']) / len(train_results_folder['psnr_y'])
+                ## ssim_y = sum(train_results_folder['ssim_y']) / len(train_results_folder['ssim_y'])
+                ## logging.info('Training: iters {:d}/{:d} -Time:{:.6f} -LR:{:.7f} -Loss {:8f} -PSNR: {:.2f} dB; SSIM: {:.4f}; PSNR_Y: {:.2f} dB; SSIM_Y: {:.4f}'.format(iter_count, total_iters, time.time()-current_start_time, optimizer.param_groups[0]['lr'], current_loss/args.print_period, psnr, ssim, psnr_y, ssim_y))
+                # logging.info('Training: iters {:d}/{:d} -Time:{:.6f} -LR:{:.7f} -Loss {:8f} -PSNR: {:.2f} dB; SSIM: {:.4f}'.format(iter_count, total_iters, time.time()-current_start_time, optimizer.param_groups[0]['lr'], current_loss/args.print_period, psnr, ssim))
                 torch.save({'iter': iter_count, 
                             'state_dict': model.module.state_dict() if gpu_count > 1 else model.state_dict(),
                             'optimizer' : optimizer.state_dict()

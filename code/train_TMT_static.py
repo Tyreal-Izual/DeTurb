@@ -26,6 +26,7 @@ def get_args():
     parser.add_argument('--iters', type=int, default=800000, help='Number of epochs')
     parser.add_argument('--batch-size', '-b', dest='batch_size', metavar='B', type=int, default=1, help='Batch size')
     parser.add_argument('--patch-size', '-ps', dest='patch_size', type=int, default=240, help='Batch size')
+    parser.add_argument('--log-frequency', type=int, default=1, help='Frequency of logging information')
     parser.add_argument('--print-period', '-pp', dest='print_period', type=int, default=1000, help='number of iterations to save checkpoint')
     parser.add_argument('--val-period', '-vp', dest='val_period', type=int, default=5000, help='number of iterations for validation')
     parser.add_argument('--learning-rate', '-l', metavar='LR', type=float, default=0.0001, help='Learning rate', dest='lr')
@@ -103,7 +104,7 @@ def main():
     warmup_iter = 10000
     scheduler_cosine = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, total_iters-warmup_iter, eta_min=1e-6)
     scheduler = GradualWarmupScheduler(optimizer, multiplier=1, total_epoch=warmup_iter, after_scheduler=scheduler_cosine)
-    scheduler.step()
+    # scheduler.step()
     
     
     ######### Resume ###########
@@ -189,12 +190,20 @@ def main():
                 psnr_batch, ssim_batch = eval_tensor_imgs(target, output, input_)
             train_results_folder['psnr'] += psnr_batch
             train_results_folder['ssim'] += ssim_batch
-                    
+
+            if iter_count % args.log_frequency == 0:
+                psnr = sum(train_results_folder['psnr']) / len(train_results_folder['psnr'])
+                ssim = sum(train_results_folder['ssim']) / len(train_results_folder['ssim'])
+                logging.info('Training: iters {:d}/{:d} -Time:{:.6f} -LR:{:.7f} -Loss {:8f} -PSNR: {:.2f} dB; SSIM: {:.4f}'.format(iter_count, total_iters, time.time()-current_start_time, optimizer.param_groups[0]['lr'], current_loss/args.print_period, psnr, ssim))
+
+                current_loss = 0
+
+
             if iter_count>start_iter and iter_count % args.print_period == 0:
                 psnr = sum(train_results_folder['psnr']) / len(train_results_folder['psnr'])
                 ssim = sum(train_results_folder['ssim']) / len(train_results_folder['ssim'])
-                logging.info('Training: iters {:d}/{:d} -Time:{:.6f} -LR:{:.7f} -Loss {:8f} -PSNR: {:.2f} dB; SSIM: {:.4f}'.format(
-                    iter_count, total_iters, time.time()-current_start_time, optimizer.param_groups[0]['lr'], current_loss/args.print_period, psnr, ssim))
+                # logging.info('Training: iters {:d}/{:d} -Time:{:.6f} -LR:{:.7f} -Loss {:8f} -PSNR: {:.2f} dB; SSIM: {:.4f}'.format(
+                #    iter_count, total_iters, time.time()-current_start_time, optimizer.param_groups[0]['lr'], current_loss/args.print_period, psnr, ssim))
 
                 torch.save({'iter': iter_count, 
                             'state_dict': model.module.state_dict() if gpu_count > 1 else model.state_dict(),

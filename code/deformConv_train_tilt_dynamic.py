@@ -11,7 +11,7 @@ import torch
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from utils.scheduler import GradualWarmupScheduler
-from model.UNet3d_TMT import DetiltUNet3DS
+from model.UNet3dDC_TMT import DetiltUNet3DS
 import utils.losses as losses
 from utils import utils_image as util
 from utils.general import create_log_folder, get_cuda_info
@@ -36,7 +36,6 @@ def get_args():
             
 def main():
     args = get_args()
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     run_name = args.run_name + '_' + datetime.now().strftime("%m-%d-%Y-%H-%M-%S")
     run_path = os.path.join(args.log_path, run_name)
     if not os.path.exists(run_path):
@@ -51,7 +50,7 @@ def main():
     val_dataset = DataLoaderTurbVideo(args.val_path, num_frames=args.num_frames, patch_size=args.patch_size, is_train=False)
     val_loader = DataLoader(dataset=val_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=True, pin_memory=True)
 
-    model = DetiltUNet3DS(norm='LN', conv_type='dw',residual='pool', noise=0.0001).to(device)
+    model = DetiltUNet3DS(norm='LN', conv_type='deformable',residual='pool', noise=0.0001).to(device)
 
     new_lr = args.lr
     optimizer = optim.Adam(model.parameters(), lr=new_lr, betas=(0.9, 0.999),eps=1e-8)

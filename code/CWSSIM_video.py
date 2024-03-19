@@ -12,8 +12,8 @@ gaussian_kernel_width = 11
 gaussian_kernel_1d = get_gaussian_kernel(gaussian_kernel_width, gaussian_kernel_sigma)
 
 save_dir = '' # directory that contains restored videos
-gt_dir = '/turb_syn_videos/test/gt/'   # directory that contains GT videos
-log_path = 'CWSSIM.txt' 
+gt_dir = ''   # directory that contains GT videos
+log_path = ''
 
 cw_ssim_list = []
 cw_ssim_img = []

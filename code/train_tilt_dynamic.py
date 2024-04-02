@@ -20,7 +20,7 @@ from data.dataset_video_train import DataLoaderTurbVideo
 def get_args():
     parser = argparse.ArgumentParser(description='Train the UNet on images and restoration')
     parser.add_argument('--epochs', '-e', metavar='E', type=int, default=150, help='Number of epochs')
-    parser.add_argument('--batch-size', '-b', dest='batch_size', metavar='B', type=int, default=6, help='Batch size6')
+    parser.add_argument('--batch-size', '-b', dest='batch_size', metavar='B', type=int, default=2, help='Batch size6')
     parser.add_argument('--patch-size', '-ps', dest='patch_size', type=int, default=128, help='Batch size')
     parser.add_argument('--num_frames', '-nf', type=int, default=12, help='number of input frames')
     parser.add_argument('--val-period', '-vp', dest='val_period', type=int, default=5, help='number of frames used for reconstruction')

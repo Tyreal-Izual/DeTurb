@@ -8,7 +8,7 @@ def read_log_data(file_path):
     return log_data
 
 # Path to the recording.log file
-log_file_path = 'C:\\Users\\Zouzh\\Desktop\\training recording\\Original dynamic training\\36000\\recording.log'
+log_file_path = 'C:\\Users\\Zouzh\\Desktop\\New folder\\or trained result\\New folder\\recording.log'
 
 # Reading log data from file
 log_data = read_log_data(log_file_path)

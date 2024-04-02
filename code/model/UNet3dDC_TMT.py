@@ -82,6 +82,8 @@ class DetiltUNet3DS(nn.Module):
         # Encoder part
         xin = x.permute(0,2,1,3,4)
         xin = add_noise(xin, self.noise*random.random())
+        print(f"Input shape before layer: {x.shape}")
+
         x1 = self.conv_blk1(xin)
 
         x_low1 = self.pool1(x1)

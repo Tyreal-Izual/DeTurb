@@ -9,7 +9,7 @@ from einops.layers.torch import Rearrange
 from torchvision.ops import DeformConv2d
 import sys
 sys.path.append('C:\\Users\\Zouzh\\Desktop\\IP\\code\\model')
-from DeCov import DeformConv3d
+from DefConv import DeformConv3d
 
 ##########################################################################
 ## Layer Norm

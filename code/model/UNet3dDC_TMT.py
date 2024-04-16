@@ -8,7 +8,7 @@ import random
 import torch.utils.checkpoint as checkpoint
 import sys
 sys.path.append('C:\\Users\\Zouzh\\Desktop\\IP\\code\\model')
-from DeCov import DeformConv3d
+from DefConv import DeformConv3d
 
 
 class LayerNorm3D(nn.Module):

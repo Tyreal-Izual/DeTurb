@@ -1,3 +1,7 @@
+## Restormer: Efficient Transformer for High-Resolution Image Restoration
+## Syed Waqas Zamir, Aditya Arora, Salman Khan, Munawar Hayat, Fahad Shahbaz Khan, and Ming-Hsuan Yang
+## https://arxiv.org/abs/2111.09881
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -6,10 +10,7 @@ from pdb import set_trace as stx
 import torch.utils.checkpoint as checkpoint
 from einops import rearrange
 from einops.layers.torch import Rearrange
-from torchvision.ops import DeformConv2d
-import sys
-sys.path.append('C:\\Users\\Zouzh\\Desktop\\IP\\code\\model')
-from DefConv import DeformConv3d
+
 
 ##########################################################################
 ## Layer Norm
@@ -95,25 +96,7 @@ class DWconv3D(nn.Module):
     def forward(self, x):
         return self.conv(x)
 
-####################
 
-
-class DeformConv3D_Block(nn.Module):
-    def __init__(self, inp_feat, out_feat, kernel_size=3, stride=1, padding=1, bias=False):
-        super(DeformConv3D_Block, self).__init__()
-        self.deform_conv = DeformConv3d(inp_feat, out_feat, kernel_size=kernel_size, stride=stride, padding=padding,
-                                        bias=bias)
-        self.bn = nn.BatchNorm3d(out_feat)
-        self.relu = nn.ReLU(inplace=True)
-
-    def forward(self, x):
-        x = self.deform_conv(x)
-        x = self.bn(x)
-        x = self.relu(x)
-        return x
-
-
-####################
 class Conv3D_Block(nn.Module):
     def __init__(self, inp_feat, out_feat, kernel=3, stride=1, padding=1, norm=nn.BatchNorm3d, conv_type='normal', residual=None):
         super(Conv3D_Block, self).__init__()
@@ -145,30 +128,18 @@ class Conv3D_Block(nn.Module):
         else:
             return self.conv2(self.conv1(x)) + self.residual_upsampler(res)
 
-# class FeatureAlign(nn.Module):
-#     def __init__(self, inp_feat, embed_feat):
-#         super(FeatureAlign, self).__init__()
-#
-#         self.conv_blk = Conv3D_Block(inp_feat, embed_feat, norm=LayerNorm3D, conv_type='dw', residual='conv')
-#         self.out = nn.Conv3d(embed_feat, 2, kernel_size=3, stride=1, padding=1, bias=True)
-#
-#     def forward(self, x):
-#         flow = self.out(self.conv_blk(x))
-#         out = TiltWarp(x, flow)
-#         return out
-
 class FeatureAlign(nn.Module):
     def __init__(self, inp_feat, embed_feat):
         super(FeatureAlign, self).__init__()
 
-        # Replace Conv3D_Block with DeformConv3D_Block
-        self.conv_blk = DeformConv3D_Block(inp_feat, embed_feat, kernel_size=3, stride=1, padding=1, bias=False)
+        self.conv_blk = Conv3D_Block(inp_feat, embed_feat, norm=LayerNorm3D, conv_type='dw', residual='conv')
         self.out = nn.Conv3d(embed_feat, 2, kernel_size=3, stride=1, padding=1, bias=True)
 
     def forward(self, x):
         flow = self.out(self.conv_blk(x))
         out = TiltWarp(x, flow)
         return out
+
 
 ##########################################################################
 class FeedForward(nn.Module):
@@ -192,6 +163,149 @@ class FeedForward(nn.Module):
             x, f = self.project_out(x).split([self.dim, self.flow_dim], dim=1)
             return x, f
 
+
+##########################################################################
+## Multi-DConv Head Transposed Self-Attention (MDTA)
+class AttentionC(nn.Module):
+    def __init__(self, dim, num_heads, bias):
+        super(AttentionC, self).__init__()
+        self.num_heads = num_heads
+        self.temperature = nn.Parameter(torch.ones(num_heads, 1, 1))
+
+        self.qkv = nn.Conv3d(dim, dim*3, kernel_size=1, bias=bias)
+        self.qkv_dwconv = nn.Conv3d(dim*3, dim*3, kernel_size=3, stride=1, padding=1, groups=dim*3, bias=bias)
+        self.project_out = nn.Conv3d(dim, dim, kernel_size=1, bias=bias)
+
+
+    def forward(self, x):
+        b,c,t,h,w = x.shape
+
+        qkv = self.qkv_dwconv(self.qkv(x))
+        q,k,v = qkv.chunk(3, dim=1)
+        
+        q = rearrange(q, 'b (head c) t h w -> b head c (t h w)', head=self.num_heads)
+        k = rearrange(k, 'b (head c) t h w -> b head c (t h w)', head=self.num_heads)
+        v = rearrange(v, 'b (head c) t h w -> b head c (t h w)', head=self.num_heads)
+
+        q = F.normalize(q, dim=-1)
+        k = F.normalize(k, dim=-1)
+
+        attn = (q @ k.transpose(-2, -1)) * self.temperature
+        attn = attn.softmax(dim=-1)
+        out = (attn @ v)
+        
+        out = rearrange(out, 'b head c (t h w) -> b (head c) t h w', head=self.num_heads, t=t, h=h, w=w)
+
+        out = self.project_out(out)
+        return out
+
+##########################################################################
+## Multi-DConv Head Transposed Self-Attention (MDTA)
+class AttentionCTS(nn.Module):
+    def __init__(self, dim, num_heads, bias, n_frames=10):
+        super(AttentionCTS, self).__init__()
+        self.num_heads = num_heads
+        self.temperature = nn.Parameter(torch.ones(num_heads, 1, 1))
+        self.qkv_comp = nn.Sequential(nn.Conv3d(dim, dim*3, kernel_size=1, bias=bias),
+                            nn.Conv3d(dim*3, dim*3, kernel_size=(1,3,3), stride=1, padding=(0,1,1), groups=dim*3, bias=bias),
+                            Rearrange('b c t h w -> b c h w t'),
+                            nn.Linear(n_frames, n_frames),
+                            Rearrange('b c h w t -> b c t h w'))
+
+        self.project_out = nn.Conv3d(dim, dim, kernel_size=1, bias=bias)
+
+
+    def forward(self, x):
+        b,c,t,h,w = x.shape
+
+        qkv = self.qkv_comp(x)
+        q,k,v = qkv.chunk(3, dim=1)
+        
+        q = rearrange(q, 'b (head c) t h w -> b head (c t) (h w)', head=self.num_heads)
+        k = rearrange(k, 'b (head c) t h w -> b head (c t) (h w)', head=self.num_heads)
+        v = rearrange(v, 'b (head c) t h w -> b head (c t) (h w)', head=self.num_heads)
+
+        q = F.normalize(q, dim=-1)
+        k = F.normalize(k, dim=-1)
+        
+        attn = (q @ k.transpose(-2, -1)) * self.temperature
+        attn = attn.softmax(dim=-1)
+        out = (attn @ v)
+        
+        out = rearrange(out, 'b head (c t) (h w) -> b (head c) t h w', head=self.num_heads, t=t, h=h, w=w)
+
+        out = self.project_out(out)
+        return out
+
+##########################################################################
+## simple gate
+class Simple(nn.Module):
+    def __init__(self, dim, bias, n_frames=10):
+        super(Simple, self).__init__()
+        self.transform = nn.Sequential(nn.Conv3d(dim, dim*2, kernel_size=1, bias=bias),
+                            nn.Conv3d(dim*2, dim*2, kernel_size=(1,3,3), stride=1, padding=(0,1,1), groups=dim*2, bias=bias),
+                            Rearrange('b c t h w -> b c h w t'),
+                            nn.Linear(n_frames, n_frames),
+                            Rearrange('b c h w t -> b c t h w'))
+                            
+        self.sca = nn.Sequential(
+            nn.AdaptiveAvgPool3d(1),
+            nn.Conv3d(dim, dim, kernel_size=1, padding=0, stride=1, bias=True),
+        )
+                            
+        self.project_out1 = nn.Conv3d(dim, dim, kernel_size=1, bias=bias)
+        self.project_out2 = nn.Conv3d(dim, dim, kernel_size=1, bias=bias)
+
+
+    def forward(self, x):
+        q, k = self.transform(x).chunk(2, dim=1)
+        x = self.project_out1(q * k)
+        x = x * self.sca(x)
+        out = self.project_out2(x)
+        
+        return out
+        
+##########################################################################
+## Multi-DConv Head Transposed Self-Attention (MDTA)
+class AttentionCT(nn.Module):
+    def __init__(self, dim, num_heads, bias, n_frames=10):
+        super(AttentionCT, self).__init__()
+        self.num_heads = num_heads
+        self.temperature = nn.Parameter(torch.ones(num_heads, 1, 1))
+        ct_dim = dim*n_frames
+        # dim_squeeze = dim * 2
+        # self.qkv_comp = nn.Sequential(Rearrange('b c t h w -> b (c t) h w'),
+        #                     nn.Conv2d(ct_dim, ct_dim*3, kernel_size=1, bias=bias),
+        #                     nn.Conv2d(ct_dim*3, ct_dim*3, kernel_size=3, stride=1, padding=1, groups=ct_dim*3, bias=bias))
+        self.qkv_comp = nn.Sequential(Rearrange('b c t h w -> b (c t) h w'),
+                            nn.Conv2d(ct_dim, ct_dim, kernel_size=3, stride=1, padding=1, groups=ct_dim, bias=bias),
+                            nn.Conv2d(ct_dim, ct_dim*3, kernel_size=1, bias=bias))
+        self.project_out = nn.Conv2d(ct_dim, ct_dim, kernel_size=1, bias=bias)
+
+
+    def forward(self, x):
+        b,c,t,h,w = x.shape
+
+        qkv = self.qkv_comp(x)
+        q,k,v = qkv.chunk(3, dim=1)
+        
+        q = rearrange(q, 'b (head c t) h w -> b head (c t) (h w)', head=self.num_heads, t=t)
+        k = rearrange(k, 'b (head c t) h w -> b head (c t) (h w)', head=self.num_heads, t=t)
+        v = rearrange(v, 'b (head c t) h w -> b head (c t) (h w)', head=self.num_heads, t=t)
+
+        q = F.normalize(q, dim=-1)
+        k = F.normalize(k, dim=-1)
+        
+        attn = (q @ k.transpose(-2, -1)) * self.temperature
+        attn = attn.softmax(dim=-1)
+        out = (attn @ v)
+        
+        out = rearrange(out, 'b head ct (h w) -> b (head ct) h w', h=h, w=w)
+        out = self.project_out(out)
+        out = rearrange(out, 'b (c t) h w -> b c t h w', t=t)
+        return out
+
+
 ##########################################################################
 ## channel-temporal shuffle attention
 class AttentionCTSF(nn.Module):
@@ -201,7 +315,7 @@ class AttentionCTSF(nn.Module):
         self.temperature = nn.Parameter(torch.ones(num_heads, 1, 1))
         shuffle_g = 8
         # shuffle_g = 16
-        self.get_qkv = nn.Sequential(nn.Conv3d(dim, dim*3, kernel_size=1, bias=bias),
+        self.qkv_comp = nn.Sequential(nn.Conv3d(dim, dim*3, kernel_size=1, bias=bias),
                             nn.Conv3d(dim*3, dim*3, kernel_size=(1,3,3), stride=1, padding=(0,1,1), groups=dim*3, bias=bias),
                             Rearrange('b (c1 c2) t h w -> b c2 h w (c1 t)', c1=shuffle_g),
                             nn.Linear(n_frames*shuffle_g, n_frames*shuffle_g),
@@ -212,7 +326,7 @@ class AttentionCTSF(nn.Module):
     def forward(self, x):
         b,c,t,h,w = x.shape
 
-        qkv = self.get_qkv(x)
+        qkv = self.qkv_comp(x)
         q,k,v = qkv.chunk(3, dim=1)
         
         q = rearrange(q, 'b (head c t) h w -> b head (c t) (h w)', head=self.num_heads, t=t)
@@ -240,7 +354,7 @@ class AttentionCTSFNew(nn.Module):
         self.PE = nn.Parameter(torch.zeros(1, dim, n_frames, 1, 1))
         shuffle_g = 8
         # shuffle_g = 16
-        self.get_qkv = nn.Sequential(nn.Conv3d(dim, dim*3, kernel_size=1, bias=bias),
+        self.qkv_comp = nn.Sequential(nn.Conv3d(dim, dim*3, kernel_size=1, bias=bias),
                             nn.Conv3d(dim*3, dim*3, kernel_size=(1,3,3), stride=1, padding=(0,1,1), groups=dim*3, bias=bias),
                             Rearrange('b (c1 c2) t h w -> b c2 h w (c1 t)', c1=shuffle_g),
                             nn.Linear(n_frames*shuffle_g, n_frames*shuffle_g),
@@ -251,7 +365,7 @@ class AttentionCTSFNew(nn.Module):
     def forward(self, x):
         b,c,t,h,w = x.shape
         
-        qkv = self.get_qkv(x + self.PE)
+        qkv = self.qkv_comp(x + self.PE)
         q,k,v = qkv.chunk(3, dim=1)
         
         q = rearrange(q, 'b (head c t) h w -> b head (c t) (h w)', head=self.num_heads, t=t)
@@ -269,6 +383,43 @@ class AttentionCTSFNew(nn.Module):
         out = self.project_out(out)
         return out   
         
+##########################################################################
+## channel-temporal group attention
+class AttentionCTG(nn.Module):
+    def __init__(self, dim, num_heads, bias, n_frames=10):
+        super(AttentionCTG, self).__init__()
+        self.num_heads = num_heads
+        self.temperature = nn.Parameter(torch.ones(num_heads, 1, 1))
+        group = 16
+        
+        self.qkv_comp = nn.Sequential(nn.Conv3d(dim, dim*3, kernel_size=1, bias=bias),
+                            nn.Conv3d(dim*3, dim*3, kernel_size=(1,3,3), stride=1, padding=(0,1,1), groups=dim*3, bias=bias),
+                            Rearrange('b (c1 c2) t h w -> b c1 h w (c2 t)', c1=group),
+                            nn.Linear(n_frames*dim*3//group, n_frames*dim*3//group),
+                            Rearrange('b c1 h w ct -> b (c1 ct) h w'))
+        self.project_out = nn.Conv3d(dim, dim, kernel_size=1, bias=bias)
+
+
+    def forward(self, x):
+        b,c,t,h,w = x.shape
+
+        qkv = self.qkv_comp(x)
+        q,k,v = qkv.chunk(3, dim=1)
+        
+        q = rearrange(q, 'b (head c t) h w -> b head (c t) (h w)', head=self.num_heads, t=t)
+        k = rearrange(k, 'b (head c t) h w -> b head (c t) (h w)', head=self.num_heads, t=t)
+        v = rearrange(v, 'b (head c t) h w -> b head (c t) (h w)', head=self.num_heads, t=t)
+
+        q = F.normalize(q, dim=-1)
+        k = F.normalize(k, dim=-1)
+        
+        attn = (q @ k.transpose(-2, -1)) * self.temperature
+        attn = attn.softmax(dim=-1)
+        out = (attn @ v)
+        
+        out = rearrange(out, 'b head (c t) (h w) -> b (head c) t h w', head=self.num_heads, t=t, h=h, w=w)
+        out = self.project_out(out)
+        return out
         
 ##########################################################################
 class TransformerBlock(nn.Module):
@@ -281,8 +432,16 @@ class TransformerBlock(nn.Module):
         self.norm1 = LayerNorm3D(dim, bias=LN_bias)
         if att == 'sep':
             self.attn = AttentionCTS(dim, num_heads, bias, n_frames)
+        elif att == 'full':
+            self.attn = AttentionCT(dim, num_heads, bias, n_frames)
+        elif att == 'channel':
+            self.attn = AttentionC(dim, num_heads, bias)
         elif att == 'shuffle':
             self.attn = AttentionCTSF(dim, num_heads, bias, n_frames)
+        elif att == 'withPE':
+            self.attn = AttentionCTSFNew(dim, num_heads, bias, n_frames)
+        elif att == 'group':
+            self.attn = AttentionCTG(dim, num_heads, bias, n_frames)
         elif att == 'simple':
             self.attn = Simple(dim, bias, n_frames)
         self.norm2 = LayerNorm3D(dim, bias=LN_bias)
@@ -308,10 +467,10 @@ class TransformerBlock(nn.Module):
 
 
 ##########################################################################
-## Preprocessing with 3x7x7 Conv
-class Preprocessing(nn.Module):
+## Overlapped image patch embedding with 3x7x7 Conv
+class OverlapPatchEmbed(nn.Module):
     def __init__(self, in_c=3, embed_dim=48, bias=False):
-        super(Preprocessing, self).__init__()
+        super(OverlapPatchEmbed, self).__init__()
         self.proj = nn.Conv3d(in_c, embed_dim, kernel_size=(3,7,7), stride=1, padding=(1,3,3), bias=bias)
 
     def forward(self, x):
@@ -322,10 +481,10 @@ class Preprocessing(nn.Module):
 ##########################################################################
 ## Resizing modules
 class Downsample(nn.Module):
-    def __init__(self, dim_in, dim_out):
+    def __init__(self, n_feat):
         super(Downsample, self).__init__()
 
-        self.body = nn.Sequential(nn.Conv3d(dim_in, dim_out//4, kernel_size=3, stride=1, padding=1, bias=False),
+        self.body = nn.Sequential(nn.Conv3d(n_feat, n_feat//2, kernel_size=3, stride=1, padding=1, bias=False),
                                   Rearrange('b c t (h rh) (w rw) -> b (c rh rw) t h w', rh=2, rw=2))
 
     def forward(self, x):
@@ -372,12 +531,13 @@ def make_level_blk(dim, num_tb, nhead, att, ffn, bias, LN_bias,
     return module
 
 ##########################################################################
+##---------- RestormerT -----------------------
 class TMT_MS(nn.Module):
     def __init__(self, 
         inp_channels=3, 
         out_channels=3, 
         dim = 48,
-        num_blocks = [2,3,3,4], 
+        num_blocks = [4,6,6,8], 
         num_refinement_blocks = 2,
         heads = [1,2,4,8],
         ffn_expansion_factor = 2.66,
@@ -385,7 +545,7 @@ class TMT_MS(nn.Module):
         LN_bias = True,
         warp_mode = 'none',
         n_frames = 10,
-        att_type = 'shuffle',
+        att_type = 'sep',
         out_residual = True,
         att_ckpt = False,
         ffn_ckpt = False
@@ -403,46 +563,44 @@ class TMT_MS(nn.Module):
         
         self.out_residual = out_residual
         
-        self.getFeature1 = Preprocessing(inp_channels, dim)
-        self.getFeature2 = Preprocessing(inp_channels, dim)
-        self.getFeature3 = Preprocessing(inp_channels, dim)
+        self.patch_embed = OverlapPatchEmbed(inp_channels, dim)
 
-        self.encode_l1 = nn.Sequential(*make_level_blk(dim=dim, num_tb=num_blocks[0], nhead=heads[0], att=att_type,
+        self.encoder_level1 = nn.Sequential(*make_level_blk(dim=dim, num_tb=num_blocks[0], nhead=heads[0], att=att_type,
                                                 ffn=ffn_expansion_factor, bias=bias, LN_bias=LN_bias, att_ckpt=att_ckpt, 
                                                 ffn_ckpt=ffn_ckpt, n_frames=n_frames, self_align=align[0]))
         
-        self.down1_2 = Downsample(dim, int(dim*2**1)-dim) ## From Level 1 to Level 2
-        self.encode_l2 = nn.Sequential(*make_level_blk(dim=int(dim*2**1), num_tb=num_blocks[1], nhead=heads[1], att=att_type,
+        self.down1_2 = Downsample(dim) ## From Level 1 to Level 2
+        self.encoder_level2 = nn.Sequential(*make_level_blk(dim=int(dim*2**1), num_tb=num_blocks[1], nhead=heads[1], att=att_type,
                                                 ffn=ffn_expansion_factor, bias=bias, LN_bias=LN_bias, att_ckpt=att_ckpt, 
                                                 ffn_ckpt=ffn_ckpt, n_frames=n_frames, self_align=align[1]))
 
         
-        self.down2_3 = Downsample(int(dim*2**1), int(dim*2**2)-dim) ## From Level 2 to Level 3
-        self.encode_l3 = nn.Sequential(*make_level_blk(dim=int(dim*2**2), num_tb=num_blocks[2], nhead=heads[2], att=att_type,
+        self.down2_3 = Downsample(int(dim*2**1)) ## From Level 2 to Level 3
+        self.encoder_level3 = nn.Sequential(*make_level_blk(dim=int(dim*2**2), num_tb=num_blocks[2], nhead=heads[2], att=att_type,
                                                 ffn=ffn_expansion_factor, bias=bias, LN_bias=LN_bias, att_ckpt=att_ckpt, 
                                                 ffn_ckpt=ffn_ckpt, n_frames=n_frames, self_align=align[2]))
 
-        self.down3_4 = Downsample(int(dim*2**2), int(dim*2**3)) ## From Level 3 to Level 4
-        self.embedding = nn.Sequential(*make_level_blk(dim=int(dim*2**3), num_tb=num_blocks[3], nhead=heads[3], att=att_type,
+        self.down3_4 = Downsample(int(dim*2**2)) ## From Level 3 to Level 4
+        self.latent = nn.Sequential(*make_level_blk(dim=int(dim*2**3), num_tb=num_blocks[3], nhead=heads[3], att=att_type,
                                                 ffn=ffn_expansion_factor, bias=bias, LN_bias=LN_bias, att_ckpt=att_ckpt, 
                                                 ffn_ckpt=ffn_ckpt, n_frames=n_frames, self_align=align[3]))     
                                                    
         self.up4_3 = Upsample(int(dim*2**3)) ## From Level 4 to Level 3
-        self.reduce_chan_l3 = nn.Conv3d(int(dim*2**3), int(dim*2**2), kernel_size=1, bias=bias)
-        self.decode_l3 = nn.Sequential(*make_level_blk(dim=int(dim*2**2), num_tb=num_blocks[2], nhead=heads[2], att=att_type,
+        self.reduce_chan_level3 = nn.Conv3d(int(dim*2**3), int(dim*2**2), kernel_size=1, bias=bias)
+        self.decoder_level3 = nn.Sequential(*make_level_blk(dim=int(dim*2**2), num_tb=num_blocks[2], nhead=heads[2], att=att_type,
                                                 ffn=ffn_expansion_factor, bias=bias, LN_bias=LN_bias, att_ckpt=att_ckpt, 
                                                 ffn_ckpt=ffn_ckpt, n_frames=n_frames, self_align=align[4])) 
 
 
         self.up3_2 = Upsample(int(dim*2**2)) ## From Level 3 to Level 2
-        self.reduce_chan_l2 = nn.Conv3d(int(dim*2**2), int(dim*2**1), kernel_size=1, bias=bias)
-        self.decode_l2 = nn.Sequential(*make_level_blk(dim=int(dim*2**1), num_tb=num_blocks[1], nhead=heads[1], att=att_type,
+        self.reduce_chan_level2 = nn.Conv3d(int(dim*2**2), int(dim*2**1), kernel_size=1, bias=bias)
+        self.decoder_level2 = nn.Sequential(*make_level_blk(dim=int(dim*2**1), num_tb=num_blocks[1], nhead=heads[1], att=att_type,
                                                 ffn=ffn_expansion_factor, bias=bias, LN_bias=LN_bias, att_ckpt=att_ckpt, 
                                                 ffn_ckpt=ffn_ckpt, n_frames=n_frames, self_align=align[5])) 
         
         self.up2_1 = Upsample(int(dim*2**1))
 
-        self.decode_l1 = nn.Sequential(*make_level_blk(dim=int(dim*2**1), num_tb=num_blocks[0], nhead=heads[0], att=att_type,
+        self.decoder_level1 = nn.Sequential(*make_level_blk(dim=int(dim*2**1), num_tb=num_blocks[0], nhead=heads[0], att=att_type,
                                                 ffn=ffn_expansion_factor, bias=bias, LN_bias=LN_bias, att_ckpt=att_ckpt, 
                                                 ffn_ckpt=ffn_ckpt, n_frames=n_frames, self_align=align[6])) 
 
@@ -453,40 +611,38 @@ class TMT_MS(nn.Module):
         self.output = nn.Conv3d(int(dim*2**1), out_channels, kernel_size=3, stride=1, padding=1, bias=bias)
 
     def forward(self, inp_img):
-        b,c,t,h,w = inp_img.shape
-        inp_img2 = F.interpolate(inp_img, size=(t, h//2, w//2), mode='trilinear', align_corners=False)
-        inp_img3 = F.interpolate(inp_img, size=(t, h//4, w//4), mode='trilinear', align_corners=False)
-        inp_enc_l1 = self.getFeature1(inp_img)
-        inp_enc_l2 = self.getFeature2(inp_img2)
-        inp_enc_l3 = self.getFeature3(inp_img3)
+
+        inp_enc_level1 = self.patch_embed(inp_img)
+        out_enc_level1 = self.encoder_level1(inp_enc_level1)
+        inp_enc_level2 = self.down1_2(out_enc_level1)
+        out_enc_level2 = self.encoder_level2(inp_enc_level2)
+
+        inp_enc_level3 = self.down2_3(out_enc_level2)
+        out_enc_level3 = self.encoder_level3(inp_enc_level3) 
+
+        inp_enc_level4 = self.down3_4(out_enc_level3)
+        latent = self.latent(inp_enc_level4)
+
+        inp_dec_level3 = self.up4_3(latent)
+        inp_dec_level3 = torch.cat([inp_dec_level3, out_enc_level3], 1)
+        inp_dec_level3 = self.reduce_chan_level3(inp_dec_level3)
+        out_dec_level3 = self.decoder_level3(inp_dec_level3) 
+
+        inp_dec_level2 = self.up3_2(out_dec_level3)
+        inp_dec_level2 = torch.cat([inp_dec_level2, out_enc_level2], 1)
+        inp_dec_level2 = self.reduce_chan_level2(inp_dec_level2)
+        out_dec_level2 = self.decoder_level2(inp_dec_level2) 
+
+        inp_dec_level1 = self.up2_1(out_dec_level2)
+        inp_dec_level1 = torch.cat([inp_dec_level1, out_enc_level1], 1)
+        out_dec_level1 = self.decoder_level1(inp_dec_level1)
         
-        out_enc_l1 = self.encode_l1(inp_enc_l1)
-        out_enc_l2 = self.encode_l2(torch.cat([inp_enc_l2, self.down1_2(out_enc_l1)], 1))
-        out_enc_l3 = self.encode_l3(torch.cat([inp_enc_l3, self.down2_3(out_enc_l2)], 1))
-
-        inp_enc_l4 = self.down3_4(out_enc_l3)
-        embedding = self.embedding(inp_enc_l4)
-
-        inp_dec_l3 = self.up4_3(embedding)
-        inp_dec_l3 = torch.cat([inp_dec_l3, out_enc_l3], 1)
-        inp_dec_l3 = self.reduce_chan_l3(inp_dec_l3)
-        out_dec_l3 = self.decode_l3(inp_dec_l3) 
-
-        inp_dec_l2 = self.up3_2(out_dec_l3)
-        inp_dec_l2 = torch.cat([inp_dec_l2, out_enc_l2], 1)
-        inp_dec_l2 = self.reduce_chan_l2(inp_dec_l2)
-        out_dec_l2 = self.decode_l2(inp_dec_l2) 
-
-        inp_dec_l1 = self.up2_1(out_dec_l2)
-        inp_dec_l1 = torch.cat([inp_dec_l1, out_enc_l1], 1)
-        out_dec_l1 = self.decode_l1(inp_dec_l1)
-        
-        out_dec_l1 = self.refinement(out_dec_l1)
+        out_dec_level1 = self.refinement(out_dec_level1)
         
         if self.out_residual:
-            out = self.output(out_dec_l1) + inp_img
+            out = self.output(out_dec_level1) + inp_img
         else:
-            out = self.output(out_dec_l1)
+            out = self.output(out_dec_level1)
         return out
 
 
@@ -507,8 +663,8 @@ if __name__ == '__main__':
     from fvcore.nn import FlopCountAnalysis, flop_count_table
 
     torch.cuda.set_device(0)
-    net = TMT_MS(num_blocks=[2,3,4,4], 
-                    heads=[2,4,6,8], 
+    net = TMT_MS(num_blocks=[3,4,6,3], 
+                    heads=[2,4,4,8], 
                     num_refinement_blocks=2, 
                     warp_mode='none', 
                     n_frames=12, 

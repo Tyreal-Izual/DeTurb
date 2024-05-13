@@ -586,8 +586,6 @@ class TMT_MS(nn.Module):
             out_dec_l1 = out_dec_l1.reshape(1, 256, 6, 128, 128)
             out_dec_l1 = out_dec_l1[:, :, :, ::4, ::4]
             out_dec_l1 = out_dec_l1[:, :96, :, :, :]
-
-
         else:
             b, c, t, h, w = inp_img.shape
             inp_img2 = F.interpolate(inp_img, size=(t, h // 2, w // 2), mode='trilinear', align_corners=False)

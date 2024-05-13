@@ -10,6 +10,7 @@ from torchvision.ops import DeformConv2d
 import sys
 sys.path.append('C:\\Users\\Zouzh\\Desktop\\IP\\code\\model')
 from DefConv import DeformConv3d
+from SwinUnet_3D import swinUnet_t_3D
 
 ##########################################################################
 ## Layer Norm
@@ -122,7 +123,9 @@ class Conv3D_Block(nn.Module):
             conv3d = nn.Conv3d
         elif conv_type == 'dw':
             conv3d = DWconv3D
-            
+        elif conv_type == 'deform':
+            conv3d = DeformConv3D_Block
+
         self.conv1 = nn.Sequential(
             conv3d(inp_feat, out_feat, kernel_size=kernel, stride=stride, padding=padding, bias=True),
             norm(out_feat),
@@ -388,10 +391,12 @@ class TMT_MS(nn.Module):
         att_type = 'shuffle',
         out_residual = True,
         att_ckpt = False,
-        ffn_ckpt = False
+        ffn_ckpt = False,
+        count=False
     ):
 
         super(TMT_MS, self).__init__()
+        self.count = count
         if warp_mode == 'enc':
             align = [True, True, True, False, False, False, False]
         elif warp_mode == 'dec':
@@ -402,7 +407,9 @@ class TMT_MS(nn.Module):
             align = [False, False, False, False, False, False, False]
         
         self.out_residual = out_residual
-        
+
+        if self.count:
+            self.swin_unet = swinUnet_t_3D(hidden_dim=96, layers=(2, 2, 6, 2), heads=(3, 6, 9, 12), num_classes=out_channels)
         self.getFeature1 = Preprocessing(inp_channels, dim)
         self.getFeature2 = Preprocessing(inp_channels, dim)
         self.getFeature3 = Preprocessing(inp_channels, dim)
@@ -453,6 +460,8 @@ class TMT_MS(nn.Module):
         self.output = nn.Conv3d(int(dim*2**1), out_channels, kernel_size=3, stride=1, padding=1, bias=bias)
 
     def forward(self, inp_img):
+        if self.count:
+            _ = self.swin_unet(inp_img)
         b,c,t,h,w = inp_img.shape
         inp_img2 = F.interpolate(inp_img, size=(t, h//2, w//2), mode='trilinear', align_corners=False)
         inp_img3 = F.interpolate(inp_img, size=(t, h//4, w//4), mode='trilinear', align_corners=False)
@@ -522,7 +531,7 @@ if __name__ == '__main__':
     with torch.no_grad():
         s = time.time()
         for i in range(1):
-            inputs = torch.randn(1,3,12,208,208).cuda()
+            inputs = torch.randn(1,3,12,256,256).cuda()
             print('{:>16s} : {:<.4f} [M]'.format('#Params', sum(map(lambda x: x.numel(), net.parameters())) / 10 ** 6))
             flops = FlopCountAnalysis(net, inputs)
             print(flop_count_table(flops))

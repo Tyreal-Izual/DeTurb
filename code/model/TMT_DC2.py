@@ -1,14 +1,18 @@
 import numpy as np
-import random
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import sys
-sys.path.append('C:\\Users\\Zouzh\\Desktop\\IP\\30548\\model')
-from psconv import PSConv3d
-from SwinUnet_3D import swinUnet_t_3D
+from pdb import set_trace as stx
+import torch.utils.checkpoint as checkpoint
 from einops import rearrange
 from einops.layers.torch import Rearrange
+from torchvision.ops import DeformConv2d
+import sys
+import random
+
+sys.path.append('C:\\Users\\Zouzh\\Desktop\\IP\\code\\model')
+from DefConv import DeformConv3d
+from SwinUnet_3D import swinUnet_t_3D
 
 
 ##########################################################################
@@ -40,6 +44,68 @@ class LayerNorm(nn.Module):
     def forward(self, x):
         return self.body(x)
 
+class Deconv3D_Block(nn.Module):
+    def __init__(self, inp_feat, out_feat, kernel=3, stride=2, padding=1, norm=LayerNorm3D, conv_type='dw'):
+        super(Deconv3D_Block, self).__init__()
+        if conv_type == 'normal':
+            self.deconv = nn.Sequential(
+                norm(inp_feat),
+                nn.ConvTranspose3d(inp_feat, out_feat, kernel_size=(kernel, kernel, kernel),
+                                   stride=(1, stride, stride), padding=(padding, padding, padding),
+                                   output_padding=(0, 1, 1), bias=True),
+                nn.GELU())
+        if conv_type == 'dw':
+            self.deconv = nn.Sequential(
+                norm(inp_feat),
+                nn.ConvTranspose3d(inp_feat, inp_feat, kernel_size=(kernel, kernel, kernel),
+                                   stride=(1, stride, stride), padding=(padding, padding, padding),
+                                   output_padding=(0, 1, 1), groups=inp_feat, bias=True),
+                nn.Conv3d(in_channels=inp_feat, out_channels=out_feat, kernel_size=1),
+                nn.GELU())
+
+    def forward(self, x):
+        return self.deconv(x)
+
+def TiltWarp(x, flow, interp_mode='bilinear', padding_mode='zeros', align_corners=True, applyonfeature=True):
+    """
+    Args:
+        x (Tensor): Tensor with size (b, n, c, h, w) -> (b*n, c, h, w).
+        flow (Tensor): Tensor with size (b, 2, n, h, w) -> (b*n, h, w, 2), normal value.
+        interp_mode (str): 'nearest' or 'bilinear' or 'nearest4'. Default: 'bilinear'.
+        padding_mode (str): 'zeros' or 'border' or 'reflection'.
+            Default: 'zeros'.
+        align_corners (bool): Before pytorch 1.3, the default value is
+            align_corners=True. After pytorch 1.3, the default value is
+            align_corners=False. Here, we use the True as default.
+        use_pad_mask (bool): only used for PWCNet, x is first padded with ones along the channel dimension.
+            The mask is generated according to the grid_sample results of the padded dimension.
+    Returns:
+        Tensor: Warped image or feature map.
+    """
+    if applyonfeature:
+        _, c, n, h, w = x.size()
+        x = rearrange(x, 'b c t h w -> (b t) c h w')
+    else:
+        _, n, c, h, w = x.size()
+        x = x.reshape((-1, c, h, w))
+    flow = flow.permute(0, 2, 3, 4, 1).reshape((-1, h, w, 2))
+    # create mesh grid
+    grid_y, grid_x = torch.meshgrid(torch.arange(0, h, dtype=x.dtype, device=x.device),
+                                    torch.arange(0, w, dtype=x.dtype, device=x.device))
+    grid = torch.stack((grid_x, grid_y), 2).float()  # W(x), H(y), 2
+    grid.requires_grad = False
+    vgrid = grid + flow
+
+    vgrid_x = 2.0 * vgrid[:, :, :, 0] / max(w - 1, 1) - 1.0
+    vgrid_y = 2.0 * vgrid[:, :, :, 1] / max(h - 1, 1) - 1.0
+    vgrid_scaled = torch.stack((vgrid_x, vgrid_y), dim=3)
+    output = F.grid_sample(x, vgrid_scaled, mode=interp_mode, padding_mode=padding_mode, align_corners=align_corners)
+    if applyonfeature:
+        output = rearrange(x, '(b t) c h w -> b c t h w', t=n)
+    else:
+        output = output.reshape((-1, n, c, h, w))
+    return output
+
 
 class DWconv3D(nn.Module):
 
@@ -58,39 +124,84 @@ class DWconv3D(nn.Module):
         return self.conv(x)
 
 
+####################
+
+
+class DeformConv3D_Block(nn.Module):
+    def __init__(self, inp_feat, out_feat, kernel_size=3, stride=1, padding=1, bias=False):
+        super(DeformConv3D_Block, self).__init__()
+        self.deform_conv = DeformConv3d(inp_feat, out_feat, kernel_size=kernel_size, stride=stride, padding=padding,
+                                        bias=bias)
+        self.bn = nn.BatchNorm3d(out_feat)
+        self.relu = nn.ReLU(inplace=True)
+
+    def forward(self, x):
+        x = self.deform_conv(x)
+        x = self.bn(x)
+        x = self.relu(x)
+        return x
+
+
+####################
 class Conv3D_Block(nn.Module):
-    def __init__(self, inp_feat, out_feat, kernel=3, stride=1, padding=1, norm=LayerNorm3D, conv_type='dw',
-                 residual=None, first=False):
+    def __init__(self, inp_feat, out_feat, kernel=3, stride=1, padding=1, norm=nn.BatchNorm3d, conv_type='normal',
+                 residual=None):
         super(Conv3D_Block, self).__init__()
-        if conv_type == 'normal' or first:
+
+        if conv_type == 'normal':
             conv3d = nn.Conv3d
         elif conv_type == 'dw':
             conv3d = DWconv3D
+        elif conv_type == 'deform':
+            conv3d = DeformConv3D_Block
 
         self.conv1 = nn.Sequential(
             conv3d(inp_feat, out_feat, kernel_size=kernel, stride=stride, padding=padding, bias=True),
             norm(out_feat),
-            nn.GELU())
-        if first:
-            self.conv2 = nn.Sequential(
-                DWconv3D(out_feat, out_feat, kernel_size=kernel, stride=stride, padding=padding, bias=True),
-                norm(out_feat),
-                nn.GELU())
-        else:
-            self.conv2 = nn.Sequential(
-                conv3d(out_feat, out_feat, kernel_size=kernel, stride=stride, padding=padding, bias=True),
-                norm(out_feat),
-                nn.GELU())
+            nn.LeakyReLU())
+
+        self.conv2 = nn.Sequential(
+            conv3d(out_feat, out_feat, kernel_size=kernel, stride=stride, padding=padding, bias=True),
+            norm(out_feat),
+            nn.LeakyReLU())
+
         self.residual = residual
-        if self.residual is not None:
+
+        if self.residual == 'conv':
             self.residual_upsampler = conv3d(inp_feat, out_feat, kernel_size=1, bias=False)
 
     def forward(self, x):
         res = x
-        if not self.residual:
+        if self.residual == 'conv':
             return self.conv2(self.conv1(x))
         else:
             return self.conv2(self.conv1(x)) + self.residual_upsampler(res)
+
+
+# class FeatureAlign(nn.Module):
+#     def __init__(self, inp_feat, embed_feat):
+#         super(FeatureAlign, self).__init__()
+#
+#         self.conv_blk = Conv3D_Block(inp_feat, embed_feat, norm=LayerNorm3D, conv_type='dw', residual='conv')
+#         self.out = nn.Conv3d(embed_feat, 2, kernel_size=3, stride=1, padding=1, bias=True)
+#
+#     def forward(self, x):
+#         flow = self.out(self.conv_blk(x))
+#         out = TiltWarp(x, flow)
+#         return out
+
+class FeatureAlign(nn.Module):
+    def __init__(self, inp_feat, embed_feat):
+        super(FeatureAlign, self).__init__()
+
+        # Replace Conv3D_Block with DeformConv3D_Block
+        self.conv_blk = DeformConv3D_Block(inp_feat, embed_feat, kernel_size=3, stride=1, padding=1, bias=False)
+        self.out = nn.Conv3d(embed_feat, 2, kernel_size=3, stride=1, padding=1, bias=True)
+
+    def forward(self, x):
+        flow = self.out(self.conv_blk(x))
+        out = TiltWarp(x, flow)
+        return out
 
 
 ##########################################################################
@@ -155,25 +266,80 @@ class AttentionCTSF(nn.Module):
         out = self.project_out(out)
         return out
 
+    ##########################################################################
 
-##########################################################################
+
+## channel-temporal shuffle attention
+class AttentionCTSFNew(nn.Module):
+    def __init__(self, dim, num_heads, bias, n_frames=10):
+        super(AttentionCTSFNew, self).__init__()
+        self.num_heads = num_heads
+        self.temperature = nn.Parameter(torch.ones(num_heads, 1, 1))
+        self.PE = nn.Parameter(torch.zeros(1, dim, n_frames, 1, 1))
+        shuffle_g = 8
+        # shuffle_g = 16
+        self.get_qkv = nn.Sequential(nn.Conv3d(dim, dim * 3, kernel_size=1, bias=bias),
+                                     nn.Conv3d(dim * 3, dim * 3, kernel_size=(1, 3, 3), stride=1, padding=(0, 1, 1),
+                                               groups=dim * 3, bias=bias),
+                                     Rearrange('b (c1 c2) t h w -> b c2 h w (c1 t)', c1=shuffle_g),
+                                     nn.Linear(n_frames * shuffle_g, n_frames * shuffle_g),
+                                     Rearrange('b c2 h w (c1 t) -> b (c2 c1 t) h w', c1=shuffle_g))
+        self.project_out = nn.Conv3d(dim, dim, kernel_size=1, bias=bias)
+
+    def forward(self, x):
+        b, c, t, h, w = x.shape
+
+        qkv = self.get_qkv(x + self.PE)
+        q, k, v = qkv.chunk(3, dim=1)
+
+        q = rearrange(q, 'b (head c t) h w -> b head (c t) (h w)', head=self.num_heads, t=t)
+        k = rearrange(k, 'b (head c t) h w -> b head (c t) (h w)', head=self.num_heads, t=t)
+        v = rearrange(v, 'b (head c t) h w -> b head (c t) (h w)', head=self.num_heads, t=t)
+
+        q = F.normalize(q, dim=-1)
+        k = F.normalize(k, dim=-1)
+
+        attn = (q @ k.transpose(-2, -1)) * self.temperature
+        attn = attn.softmax(dim=-1)
+        out = (attn @ v)
+
+        out = rearrange(out, 'b head (c t) (h w) -> b (head c) t h w', head=self.num_heads, t=t, h=h, w=w)
+        out = self.project_out(out)
+        return out
+
+    ##########################################################################
+
+
 class TransformerBlock(nn.Module):
     def __init__(self, dim, num_heads, att, ffn_expansion_factor, bias, LN_bias, flow_dim_ratio, att_ckpt, ffn_ckpt,
                  n_frames=10):
         super(TransformerBlock, self).__init__()
         self.flow_dim_ratio = flow_dim_ratio
+        self.att_ckpt = att_ckpt
+        self.ffn_ckpt = ffn_ckpt
 
         self.norm1 = LayerNorm3D(dim, bias=LN_bias)
-        self.attn = AttentionCTSF(dim, num_heads, bias, n_frames)
+        if att == 'sep':
+            self.attn = AttentionCTS(dim, num_heads, bias, n_frames)
+        elif att == 'shuffle':
+            self.attn = AttentionCTSF(dim, num_heads, bias, n_frames)
+        elif att == 'simple':
+            self.attn = Simple(dim, bias, n_frames)
         self.norm2 = LayerNorm3D(dim, bias=LN_bias)
         self.ffn = FeedForward(dim, ffn_expansion_factor, flow_dim_ratio, bias)
 
     def forward(self, x):
         x = self.norm1(x)
-        x = x + self.attn(x)
+        if self.att_ckpt:
+            x = x + checkpoint.checkpoint(self.attn, x)
+        else:
+            x = x + self.attn(x)
 
         x = self.norm2(x)
-        o = self.ffn(x)
+        if self.ffn_ckpt:
+            o = checkpoint.checkpoint(self.ffn, x)
+        else:
+            o = self.ffn(x)
 
         if self.flow_dim_ratio > 0:
             return x + o[0], o[1]
@@ -216,55 +382,10 @@ class Upsample(nn.Module):
     def forward(self, x):
         return self.body(x)
 
-
-class Deconv3D_Block(nn.Module):
-    def __init__(self, inp_feat, out_feat, kernel=3, stride=2, padding=1, norm=LayerNorm3D, conv_type='dw'):
-        super(Deconv3D_Block, self).__init__()
-        if conv_type == 'normal':
-            self.deconv = nn.Sequential(
-                norm(inp_feat),
-                nn.ConvTranspose3d(inp_feat, out_feat, kernel_size=(kernel, kernel, kernel),
-                                   stride=(1, stride, stride), padding=(padding, padding, padding),
-                                   output_padding=(0, 1, 1), bias=True),
-                nn.GELU())
-        if conv_type == 'dw':
-            self.deconv = nn.Sequential(
-                norm(inp_feat),
-                nn.ConvTranspose3d(inp_feat, inp_feat, kernel_size=(kernel, kernel, kernel),
-                                   stride=(1, stride, stride), padding=(padding, padding, padding),
-                                   output_padding=(0, 1, 1), groups=inp_feat, bias=True),
-                nn.Conv3d(in_channels=inp_feat, out_channels=out_feat, kernel_size=1),
-                nn.GELU())
-
-    def forward(self, x):
-        return self.deconv(x)
-
-
-def TiltWarp(x, flow, interp_mode='bilinear', padding_mode='zeros', align_corners=True, use_pad_mask=False):
-    _, n, c, h, w = x.size()
-    x = x.reshape((-1, c, h, w))
-
-    flow = flow.permute(0, 2, 3, 4, 1).reshape((-1, h, w, 2))
-    # create mesh grid
-    grid_y, grid_x = torch.meshgrid(torch.arange(0, h, dtype=x.dtype, device=x.device),
-                                    torch.arange(0, w, dtype=x.dtype, device=x.device))
-    grid = torch.stack((grid_x, grid_y), 2).float()  # W(x), H(y), 2
-    grid.requires_grad = False
-    vgrid = grid + flow
-
-    vgrid_x = 2.0 * vgrid[:, :, :, 0] / max(w - 1, 1) - 1.0
-    vgrid_y = 2.0 * vgrid[:, :, :, 1] / max(h - 1, 1) - 1.0
-    vgrid_scaled = torch.stack((vgrid_x, vgrid_y), dim=3)
-    output = F.grid_sample(x, vgrid_scaled, mode=interp_mode, padding_mode=padding_mode, align_corners=align_corners)
-    output = output.reshape((-1, n, c, h, w))
-    return output
-
-
 def add_noise(img, sigma):
     noise = (sigma ** 0.5) * torch.randn(img.shape, device=img.device)
     out = img + noise
     return out.clamp(0, 1)
-
 
 class UNet3D(nn.Module):
     def __init__(self, num_channels=3, feat_channels=[64, 256, 256, 512], norm='BN', conv_type='normal',
@@ -347,7 +468,6 @@ class UNet3D(nn.Module):
         out = TiltWarp(out_2, flow1)
         return out
 
-
 def make_level_blk(dim, num_tb, nhead, att, ffn, bias, LN_bias,
                    flow_dim_ratio=0, att_ckpt=False, ffn_ckpt=False, n_frames=10, self_align=True):
     module = []
@@ -362,6 +482,8 @@ def make_level_blk(dim, num_tb, nhead, att, ffn, bias, LN_bias,
                                        att_ckpt=att_ckpt,
                                        ffn_ckpt=ffn_ckpt,
                                        n_frames=n_frames))
+        if i == int(num_tb / 2) and self_align:
+            module.append(FeatureAlign(dim, dim))
 
     module.append(TransformerBlock(dim=dim,
                                    num_heads=nhead,
@@ -393,14 +515,26 @@ class TMT_MS(nn.Module):
                  att_type='shuffle',
                  out_residual=True,
                  att_ckpt=False,
-                 ffn_ckpt=False
+                 ffn_ckpt=False,
+                 count=False
                  ):
 
         super(TMT_MS, self).__init__()
-        align = [False, False, False, False, False, False, False]
+        self.count = count
+        if warp_mode == 'enc':
+            align = [True, True, True, False, False, False, False]
+        elif warp_mode == 'dec':
+            align = [False, False, False, True, True, True, True]
+        elif warp_mode == 'all':
+            align = [True, True, True, True, True, True, True]
+        else:
+            align = [False, False, False, False, False, False, False]
 
         self.out_residual = out_residual
 
+        if self.count:
+            self.swin_unet = swinUnet_t_3D(hidden_dim=96, layers=(2, 2, 6, 2), heads=(3, 6, 9, 12),
+                                           num_classes=out_channels)
         self.getFeature1 = Preprocessing(inp_channels, dim)
         self.getFeature2 = Preprocessing(inp_channels, dim)
         self.getFeature3 = Preprocessing(inp_channels, dim)
@@ -454,15 +588,13 @@ class TMT_MS(nn.Module):
                             ffn=ffn_expansion_factor, bias=bias, LN_bias=LN_bias, att_ckpt=att_ckpt,
                             ffn_ckpt=ffn_ckpt, n_frames=n_frames, self_align=align[6]))
 
-        self.unet3d = UNet3D(norm='LN', residual='pool', conv_type='dw')
-        # self.swin3d = swinUnet_t_3D()
-        # self.swin_conv = nn.ConvTranspose2d(in_channels=96, out_channels=128, kernel_size=4, stride=4)
-
-        self.output = PSConv3d(int(dim * 2 ** 1), out_channels, kernel_size=3, stride=1, padding=1, bias=bias)
+        self.output = nn.Conv3d(int(dim * 2 ** 1), out_channels, kernel_size=3, stride=1, padding=1, bias=bias)
 
     def forward(self, inp_img):
-        inp_img = self.unet3d(inp_img)
-        inp_img = inp_img.permute(0, 2, 1, 3, 4)
+        if self.count:
+            inp_img1 = self.unet3d(inp_img)
+            inp_img1 = inp_img1.permute(0, 2, 1, 3, 4)
+            _ = self.swin_unet(inp_img1)
         b, c, t, h, w = inp_img.shape
         inp_img2 = F.interpolate(inp_img, size=(t, h // 2, w // 2), mode='trilinear', align_corners=False)
         inp_img3 = F.interpolate(inp_img, size=(t, h // 4, w // 4), mode='trilinear', align_corners=False)
@@ -493,17 +625,6 @@ class TMT_MS(nn.Module):
 
         out_dec_l1 = self.refinement(out_dec_l1)
 
-        # out_dec_l1 = out_dec_l1.squeeze(0)
-        # out_dec_l1 = out_dec_l1.permute(1, 0, 2, 3)
-        # out_dec_l1 = out_dec_l1
-        # out_dec_l1 = self.swin_conv(out_dec_l1)
-        # out_dec_l1 = out_dec_l1.unsqueeze(1)
-        # out_dec_l1 = self.swin3d(out_dec_l1)
-        # out_dec_l1 = out_dec_l1.permute(1, 2, 0, 3, 4)
-        # out_dec_l1 = out_dec_l1.reshape(1, 256, 6, 128, 128)
-        # out_dec_l1 = out_dec_l1[:, :, :, ::4, ::4]
-        # out_dec_l1 = out_dec_l1[:, :96, :, :, :]
-
         if self.out_residual:
             out = self.output(out_dec_l1) + inp_img
         else:
@@ -511,8 +632,43 @@ class TMT_MS(nn.Module):
         return out
 
 
+def restore_PIL(tensor, b, fidx):
+    img = tensor[b, fidx, ...].data.squeeze().float().cpu().clamp_(0, 1).numpy()
+    if img.ndim == 3:
+        img = np.transpose(img, (1, 2, 0))  # CHW-RGB to HWC-BGR
+    img = (img * 255.0).round().astype(np.uint8)  # float32 to uint8
+    return img
+
+
 if __name__ == '__main__':
-    out_dec_l1 = torch.randn(6, 96, 32, 32)
-    conv_transpose_layer = nn.ConvTranspose2d(in_channels=96, out_channels=128, kernel_size=4, stride=4)
-    out_dec_l1_conv_transpose = conv_transpose_layer(out_dec_l1)
-    print(out_dec_l1_conv_transpose.size())
+    from torchsummary import summary
+    from PIL import Image
+    import torchvision.transforms.functional as TF
+    from UNet3d_TMT import DetiltUNet3D
+    import cv2
+    import time
+    from fvcore.nn import FlopCountAnalysis, flop_count_table
+
+    torch.cuda.set_device(0)
+    net = TMT_MS(num_blocks=[2, 3, 4, 4],
+                 heads=[2, 4, 6, 8],
+                 num_refinement_blocks=2,
+                 warp_mode='none',
+                 n_frames=12,
+                 att_type='shuffle',
+                 att_ckpt=False,
+                 ffn_ckpt=False).cuda().train()
+    # torch.save(net.state_dict(), 'model_shuffle.pth')
+    # summary(net, (3,10,128,128))
+    # summary(net, (3,20,128,128))
+    # 22.9528 1584~12f
+    with torch.no_grad():
+        s = time.time()
+        for i in range(1):
+            inputs = torch.randn(1, 3, 12, 256, 256).cuda()
+            print('{:>16s} : {:<.4f} [M]'.format('#Params', sum(map(lambda x: x.numel(), net.parameters())) / 10 ** 6))
+            flops = FlopCountAnalysis(net, inputs)
+            print(flop_count_table(flops))
+            print(flops.total())
+            # net(inputs)
+        print(time.time() - s)

@@ -409,7 +409,8 @@ class TMT_MS(nn.Module):
         self.out_residual = out_residual
 
         if self.count:
-            self.swin_unet = swinUnet_t_3D(hidden_dim=96, layers=(2, 2, 6, 2), heads=(3, 6, 9, 12), num_classes=out_channels)
+            self.swin3d = swinUnet_t_3D()
+            self.swin_conv = nn.ConvTranspose2d(in_channels=48, out_channels=128, kernel_size=4, stride=4)
         self.getFeature1 = Preprocessing(inp_channels, dim)
         self.getFeature2 = Preprocessing(inp_channels, dim)
         self.getFeature3 = Preprocessing(inp_channels, dim)
@@ -461,36 +462,49 @@ class TMT_MS(nn.Module):
 
     def forward(self, inp_img):
         if self.count:
-            _ = self.swin_unet(inp_img)
-        b,c,t,h,w = inp_img.shape
-        inp_img2 = F.interpolate(inp_img, size=(t, h//2, w//2), mode='trilinear', align_corners=False)
-        inp_img3 = F.interpolate(inp_img, size=(t, h//4, w//4), mode='trilinear', align_corners=False)
-        inp_enc_l1 = self.getFeature1(inp_img)
-        inp_enc_l2 = self.getFeature2(inp_img2)
-        inp_enc_l3 = self.getFeature3(inp_img3)
-        
-        out_enc_l1 = self.encode_l1(inp_enc_l1)
-        out_enc_l2 = self.encode_l2(torch.cat([inp_enc_l2, self.down1_2(out_enc_l1)], 1))
-        out_enc_l3 = self.encode_l3(torch.cat([inp_enc_l3, self.down2_3(out_enc_l2)], 1))
+            inp_img1 = inp_img.permute(0, 2, 1, 3, 4)
+            out_dec_l1 = self.getFeature1(inp_img1)
+            out_dec_l1 = out_dec_l1.squeeze(0)
+            out_dec_l1 = out_dec_l1.permute(1, 0, 2, 3)
+            out_dec_l1 = out_dec_l1
+            out_dec_l1 = self.swin_conv(out_dec_l1)
+            out_dec_l1 = out_dec_l1.unsqueeze(1)
+            out_dec_l1 = self.swin3d(out_dec_l1)
+            out_dec_l1 = out_dec_l1.permute(1, 2, 0, 3, 4)
+            out_dec_l1 = out_dec_l1.reshape(1, 256, 6, 128, 128)
+            out_dec_l1 = out_dec_l1[:, :, :, ::4, ::4]
+            out_dec_l1 = out_dec_l1[:, :96, :, :, :]
 
-        inp_enc_l4 = self.down3_4(out_enc_l3)
-        embedding = self.embedding(inp_enc_l4)
+        else:
+            b,c,t,h,w = inp_img.shape
+            inp_img2 = F.interpolate(inp_img, size=(t, h//2, w//2), mode='trilinear', align_corners=False)
+            inp_img3 = F.interpolate(inp_img, size=(t, h//4, w//4), mode='trilinear', align_corners=False)
+            inp_enc_l1 = self.getFeature1(inp_img)
+            inp_enc_l2 = self.getFeature2(inp_img2)
+            inp_enc_l3 = self.getFeature3(inp_img3)
 
-        inp_dec_l3 = self.up4_3(embedding)
-        inp_dec_l3 = torch.cat([inp_dec_l3, out_enc_l3], 1)
-        inp_dec_l3 = self.reduce_chan_l3(inp_dec_l3)
-        out_dec_l3 = self.decode_l3(inp_dec_l3) 
+            out_enc_l1 = self.encode_l1(inp_enc_l1)
+            out_enc_l2 = self.encode_l2(torch.cat([inp_enc_l2, self.down1_2(out_enc_l1)], 1))
+            out_enc_l3 = self.encode_l3(torch.cat([inp_enc_l3, self.down2_3(out_enc_l2)], 1))
 
-        inp_dec_l2 = self.up3_2(out_dec_l3)
-        inp_dec_l2 = torch.cat([inp_dec_l2, out_enc_l2], 1)
-        inp_dec_l2 = self.reduce_chan_l2(inp_dec_l2)
-        out_dec_l2 = self.decode_l2(inp_dec_l2) 
+            inp_enc_l4 = self.down3_4(out_enc_l3)
+            embedding = self.embedding(inp_enc_l4)
 
-        inp_dec_l1 = self.up2_1(out_dec_l2)
-        inp_dec_l1 = torch.cat([inp_dec_l1, out_enc_l1], 1)
-        out_dec_l1 = self.decode_l1(inp_dec_l1)
-        
-        out_dec_l1 = self.refinement(out_dec_l1)
+            inp_dec_l3 = self.up4_3(embedding)
+            inp_dec_l3 = torch.cat([inp_dec_l3, out_enc_l3], 1)
+            inp_dec_l3 = self.reduce_chan_l3(inp_dec_l3)
+            out_dec_l3 = self.decode_l3(inp_dec_l3)
+
+            inp_dec_l2 = self.up3_2(out_dec_l3)
+            inp_dec_l2 = torch.cat([inp_dec_l2, out_enc_l2], 1)
+            inp_dec_l2 = self.reduce_chan_l2(inp_dec_l2)
+            out_dec_l2 = self.decode_l2(inp_dec_l2)
+
+            inp_dec_l1 = self.up2_1(out_dec_l2)
+            inp_dec_l1 = torch.cat([inp_dec_l1, out_enc_l1], 1)
+            out_dec_l1 = self.decode_l1(inp_dec_l1)
+
+            out_dec_l1 = self.refinement(out_dec_l1)
         
         if self.out_residual:
             out = self.output(out_dec_l1) + inp_img

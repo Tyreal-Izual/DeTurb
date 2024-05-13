@@ -11,6 +11,7 @@ import sys
 import random
 
 sys.path.append('C:\\Users\\Zouzh\\Desktop\\IP\\code\\model')
+from psconv import PSConv3d
 from DefConv import DeformConv3d
 from SwinUnet_3D import swinUnet_t_3D
 
@@ -66,28 +67,10 @@ class Deconv3D_Block(nn.Module):
     def forward(self, x):
         return self.deconv(x)
 
-def TiltWarp(x, flow, interp_mode='bilinear', padding_mode='zeros', align_corners=True, applyonfeature=True):
-    """
-    Args:
-        x (Tensor): Tensor with size (b, n, c, h, w) -> (b*n, c, h, w).
-        flow (Tensor): Tensor with size (b, 2, n, h, w) -> (b*n, h, w, 2), normal value.
-        interp_mode (str): 'nearest' or 'bilinear' or 'nearest4'. Default: 'bilinear'.
-        padding_mode (str): 'zeros' or 'border' or 'reflection'.
-            Default: 'zeros'.
-        align_corners (bool): Before pytorch 1.3, the default value is
-            align_corners=True. After pytorch 1.3, the default value is
-            align_corners=False. Here, we use the True as default.
-        use_pad_mask (bool): only used for PWCNet, x is first padded with ones along the channel dimension.
-            The mask is generated according to the grid_sample results of the padded dimension.
-    Returns:
-        Tensor: Warped image or feature map.
-    """
-    if applyonfeature:
-        _, c, n, h, w = x.size()
-        x = rearrange(x, 'b c t h w -> (b t) c h w')
-    else:
-        _, n, c, h, w = x.size()
-        x = x.reshape((-1, c, h, w))
+def TiltWarp(x, flow, interp_mode='bilinear', padding_mode='zeros', align_corners=True, use_pad_mask=False):
+    _, n, c, h, w = x.size()
+    x = x.reshape((-1, c, h, w))
+
     flow = flow.permute(0, 2, 3, 4, 1).reshape((-1, h, w, 2))
     # create mesh grid
     grid_y, grid_x = torch.meshgrid(torch.arange(0, h, dtype=x.dtype, device=x.device),
@@ -100,10 +83,7 @@ def TiltWarp(x, flow, interp_mode='bilinear', padding_mode='zeros', align_corner
     vgrid_y = 2.0 * vgrid[:, :, :, 1] / max(h - 1, 1) - 1.0
     vgrid_scaled = torch.stack((vgrid_x, vgrid_y), dim=3)
     output = F.grid_sample(x, vgrid_scaled, mode=interp_mode, padding_mode=padding_mode, align_corners=align_corners)
-    if applyonfeature:
-        output = rearrange(x, '(b t) c h w -> b c t h w', t=n)
-    else:
-        output = output.reshape((-1, n, c, h, w))
+    output = output.reshape((-1, n, c, h, w))
     return output
 
 
@@ -167,12 +147,12 @@ class Conv3D_Block(nn.Module):
 
         self.residual = residual
 
-        if self.residual == 'conv':
+        if self.residual is not None:
             self.residual_upsampler = conv3d(inp_feat, out_feat, kernel_size=1, bias=False)
 
     def forward(self, x):
         res = x
-        if self.residual == 'conv':
+        if not self.residual:
             return self.conv2(self.conv1(x))
         else:
             return self.conv2(self.conv1(x)) + self.residual_upsampler(res)
@@ -406,7 +386,7 @@ class UNet3D(nn.Module):
             norm3d = LayerNorm3D
 
         self.conv_blk1 = Conv3D_Block(num_channels, feat_channels[0], kernel=7, stride=1, padding=3, norm=norm3d,
-                                      conv_type='normal', residual=residual, first=True)
+                                      conv_type='normal', residual=residual)
         self.conv_blk2 = Conv3D_Block(feat_channels[0], feat_channels[1], kernel=7, stride=1, padding=3, norm=norm3d,
                                       conv_type=conv_type, residual=residual)
         self.conv_blk3 = Conv3D_Block(feat_channels[1], feat_channels[2], kernel=5, stride=1, padding=2, norm=norm3d,
@@ -533,8 +513,9 @@ class TMT_MS(nn.Module):
         self.out_residual = out_residual
 
         if self.count:
-            self.swin_unet = swinUnet_t_3D(hidden_dim=96, layers=(2, 2, 6, 2), heads=(3, 6, 9, 12),
-                                           num_classes=out_channels)
+            self.unet3d = UNet3D(norm='LN', residual='pool', conv_type='dw')
+            self.swin3d = swinUnet_t_3D()
+            self.swin_conv = nn.ConvTranspose2d(in_channels=48, out_channels=128, kernel_size=4, stride=4)
         self.getFeature1 = Preprocessing(inp_channels, dim)
         self.getFeature2 = Preprocessing(inp_channels, dim)
         self.getFeature3 = Preprocessing(inp_channels, dim)
@@ -594,36 +575,49 @@ class TMT_MS(nn.Module):
         if self.count:
             inp_img1 = self.unet3d(inp_img)
             inp_img1 = inp_img1.permute(0, 2, 1, 3, 4)
-            _ = self.swin_unet(inp_img1)
-        b, c, t, h, w = inp_img.shape
-        inp_img2 = F.interpolate(inp_img, size=(t, h // 2, w // 2), mode='trilinear', align_corners=False)
-        inp_img3 = F.interpolate(inp_img, size=(t, h // 4, w // 4), mode='trilinear', align_corners=False)
-        inp_enc_l1 = self.getFeature1(inp_img)
-        inp_enc_l2 = self.getFeature2(inp_img2)
-        inp_enc_l3 = self.getFeature3(inp_img3)
+            out_dec_l1 = self.getFeature1(inp_img1)
+            out_dec_l1 = out_dec_l1.squeeze(0)
+            out_dec_l1 = out_dec_l1.permute(1, 0, 2, 3)
+            out_dec_l1 = out_dec_l1
+            out_dec_l1 = self.swin_conv(out_dec_l1)
+            out_dec_l1 = out_dec_l1.unsqueeze(1)
+            out_dec_l1 = self.swin3d(out_dec_l1)
+            out_dec_l1 = out_dec_l1.permute(1, 2, 0, 3, 4)
+            out_dec_l1 = out_dec_l1.reshape(1, 256, 6, 128, 128)
+            out_dec_l1 = out_dec_l1[:, :, :, ::4, ::4]
+            out_dec_l1 = out_dec_l1[:, :96, :, :, :]
 
-        out_enc_l1 = self.encode_l1(inp_enc_l1)
-        out_enc_l2 = self.encode_l2(torch.cat([inp_enc_l2, self.down1_2(out_enc_l1)], 1))
-        out_enc_l3 = self.encode_l3(torch.cat([inp_enc_l3, self.down2_3(out_enc_l2)], 1))
 
-        inp_enc_l4 = self.down3_4(out_enc_l3)
-        embedding = self.embedding(inp_enc_l4)
+        else:
+            b, c, t, h, w = inp_img.shape
+            inp_img2 = F.interpolate(inp_img, size=(t, h // 2, w // 2), mode='trilinear', align_corners=False)
+            inp_img3 = F.interpolate(inp_img, size=(t, h // 4, w // 4), mode='trilinear', align_corners=False)
+            inp_enc_l1 = self.getFeature1(inp_img)
+            inp_enc_l2 = self.getFeature2(inp_img2)
+            inp_enc_l3 = self.getFeature3(inp_img3)
 
-        inp_dec_l3 = self.up4_3(embedding)
-        inp_dec_l3 = torch.cat([inp_dec_l3, out_enc_l3], 1)
-        inp_dec_l3 = self.reduce_chan_l3(inp_dec_l3)
-        out_dec_l3 = self.decode_l3(inp_dec_l3)
+            out_enc_l1 = self.encode_l1(inp_enc_l1)
+            out_enc_l2 = self.encode_l2(torch.cat([inp_enc_l2, self.down1_2(out_enc_l1)], 1))
+            out_enc_l3 = self.encode_l3(torch.cat([inp_enc_l3, self.down2_3(out_enc_l2)], 1))
 
-        inp_dec_l2 = self.up3_2(out_dec_l3)
-        inp_dec_l2 = torch.cat([inp_dec_l2, out_enc_l2], 1)
-        inp_dec_l2 = self.reduce_chan_l2(inp_dec_l2)
-        out_dec_l2 = self.decode_l2(inp_dec_l2)
+            inp_enc_l4 = self.down3_4(out_enc_l3)
+            embedding = self.embedding(inp_enc_l4)
 
-        inp_dec_l1 = self.up2_1(out_dec_l2)
-        inp_dec_l1 = torch.cat([inp_dec_l1, out_enc_l1], 1)
-        out_dec_l1 = self.decode_l1(inp_dec_l1)
+            inp_dec_l3 = self.up4_3(embedding)
+            inp_dec_l3 = torch.cat([inp_dec_l3, out_enc_l3], 1)
+            inp_dec_l3 = self.reduce_chan_l3(inp_dec_l3)
+            out_dec_l3 = self.decode_l3(inp_dec_l3)
 
-        out_dec_l1 = self.refinement(out_dec_l1)
+            inp_dec_l2 = self.up3_2(out_dec_l3)
+            inp_dec_l2 = torch.cat([inp_dec_l2, out_enc_l2], 1)
+            inp_dec_l2 = self.reduce_chan_l2(inp_dec_l2)
+            out_dec_l2 = self.decode_l2(inp_dec_l2)
+
+            inp_dec_l1 = self.up2_1(out_dec_l2)
+            inp_dec_l1 = torch.cat([inp_dec_l1, out_enc_l1], 1)
+            out_dec_l1 = self.decode_l1(inp_dec_l1)
+
+            out_dec_l1 = self.refinement(out_dec_l1)
 
         if self.out_residual:
             out = self.output(out_dec_l1) + inp_img

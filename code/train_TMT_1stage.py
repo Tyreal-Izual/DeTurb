@@ -29,11 +29,14 @@ def get_args():
     parser.add_argument('--learning-rate', '-l', metavar='LR', type=float, default=0.0001, help='Learning rate', dest='lr')
     parser.add_argument('--num_frames', type=int, default=12, help='number of frames for the model')
     parser.add_argument('--num_workers', type=int, default=4, help='number of workers in dataloader')
-    parser.add_argument('--train_path', type=str, default='/home/zhan3275/data/syn_video/train', help='path of training imgs')
-    parser.add_argument('--val_path', type=str, default='/home/zhan3275/data/syn_video/test', help='path of validation imgs')
+    parser.add_argument('--train_path', type=str, default="C:\\Users\\Zouzh\\Desktop\\OtherProjects\\Dataset\\TMT-main\\train",
+                        help='path of training imgs')
+    parser.add_argument('--val_path', type=str, default="C:\\Users\\Zouzh\\Desktop\\OtherProjects\\Dataset\\TMT-main\\test",
+                        help='path of validation imgs')
     parser.add_argument('--march', type=str, default='normal', help='model architecture')
     parser.add_argument('--load', '-f', type=str, default=False, help='Load model from a .pth file')
-    parser.add_argument('--log_path', type=str, default='/home/zhan3275/data/train_log', help='path to save logging files and images')
+    parser.add_argument('--log_path', type=str, default='C:\\Users\\Zouzh\\Desktop\\IP\\code\\trainlog\\1',
+                        help='path to save logging files and images')
     parser.add_argument('--task', type=str, default='turb', help='choose turb or blur or both')
     parser.add_argument('--run_name', type=str, default='TMT-dynamic', help='name of this running')
     parser.add_argument('--start_over', action='store_true')
@@ -137,7 +140,10 @@ def main():
             elif args.task == 'turb':
                 input_ = data[1].cuda()
             target = data[2].cuda()
-            output = model(input_.permute(0,2,1,3,4)).permute(0,2,1,3,4)
+            try:
+                output = model(input_.permute(0, 2, 1, 3, 4)).permute(0, 2, 1, 3, 4)
+            except RuntimeError as e:
+                output = model(input_).permute(0, 2, 1, 3, 4)
 
             loss = criterion_char(output, target)
             # s2 = time.time()
@@ -235,7 +241,10 @@ def main():
                         input_ = data[1].cuda()
                     target = data[2].to(device)
                     with torch.no_grad():
-                        output = model(input_.permute(0,2,1,3,4)).permute(0,2,1,3,4)
+                        try:
+                            output = model(input_.permute(0, 2, 1, 3, 4)).permute(0, 2, 1, 3, 4)
+                        except RuntimeError as e:
+                            output = model(input_).permute(0, 2, 1, 3, 4)
                         loss = criterion_char(output, target)
 
                         eval_loss += loss.item()

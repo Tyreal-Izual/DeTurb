@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import sys
-sys.path.append('C:\\Users\\Zouzh\\Desktop\\IP\\30548\\model')
+sys.path.append('C:\\Users\\Zouzh\\Desktop\\IP\\code\\model')
 from psconv import PSConv3d
 from SwinUnet_3D import swinUnet_t_3D
 from einops import rearrange

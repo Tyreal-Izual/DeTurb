@@ -53,7 +53,7 @@ def restore_PIL(tensor, b, fidx):
 
 def get_args():
     parser = argparse.ArgumentParser(description='Video inference with overlapping patches')
-    parser.add_argument('--patch_size', '-ps', dest='patch_size', type=int, default=240, help='saptial patch size')
+    parser.add_argument('--patch_size', '-ps', dest='patch_size', type=int, default=256, help='saptial patch size')
     parser.add_argument('--temp_patch', type=int, default=12, help='temporal patch size')
     parser.add_argument('--resize_ratio', type=float, default=1.0, help='saptial resize ratio for both w and h')
     parser.add_argument('--start_frame', type=float, default=0.0,

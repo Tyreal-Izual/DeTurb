@@ -1,10 +1,10 @@
-torch==1.9.1
+torch
 torchvision
+torchaudio
 numpy
 timm
 einops
 pyssim
 opencv-python
-logging
 matplotlib
 Pillow

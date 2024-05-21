@@ -259,18 +259,26 @@ def main():
                             output = model(input_.permute(0, 2, 1, 3, 4)).permute(0, 2, 1, 3, 4)
                         except RuntimeError as e:
                             output = model(input_).permute(0, 2, 1, 3, 4)
-                        loss = criterion_char(output, target)
+
+                    input_pass = output.detach()
+
+                    with torch.no_grad():
+                        try:
+                            output_pass = model(input_pass.permute(0, 2, 1, 3, 4)).permute(0, 2, 1, 3, 4)
+                        except RuntimeError as e:
+                            output_pass = model(input_pass).permute(0, 2, 1, 3, 4)
+                        loss = criterion_char(output_pass, target)
 
                         eval_loss += loss.item()
 
-                    for b in range(output.shape[0]):
-                        for i in range(output.shape[1]):
+                    for b in range(output_pass.shape[0]):
+                        for i in range(output_pass.shape[1]):
                             inp = input_[b, i, ...].data.squeeze().float().cpu().clamp_(0, 1).numpy()
                             if inp.ndim == 3:
                                 inp = np.transpose(inp, (1, 2, 0))  # CHW-RGB to HWC-BGR
                             inp = (inp * 255.0).round().astype(np.uint8)  # float32 to uint8
 
-                            img = output[b, i, ...].data.squeeze().float().cpu().clamp_(0, 1).numpy()
+                            img = output_pass[b, i, ...].data.squeeze().float().cpu().clamp_(0, 1).numpy()
                             if img.ndim == 3:
                                 img = np.transpose(img, (1, 2, 0))  # CHW-RGB to HWC-BGR
                             img = (img * 255.0).round().astype(np.uint8)  # float32 to uint8

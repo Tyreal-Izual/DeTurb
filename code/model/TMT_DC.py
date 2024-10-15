@@ -518,36 +518,3 @@ def restore_PIL(tensor, b, fidx):
         img = np.transpose(img, (1, 2, 0))  # CHW-RGB to HWC-BGR
     img = (img * 255.0).round().astype(np.uint8)  # float32 to uint8
     return img
-            
-if __name__ == '__main__':
-    from torchsummary import summary
-    from PIL import Image
-    import torchvision.transforms.functional as TF
-    from UNet3d_TMT import DetiltUNet3D
-    import cv2
-    import time
-    from fvcore.nn import FlopCountAnalysis, flop_count_table
-
-    torch.cuda.set_device(0)
-    net = TMT_MS(num_blocks=[2,3,4,4], 
-                    heads=[2,4,6,8], 
-                    num_refinement_blocks=2, 
-                    warp_mode='none', 
-                    n_frames=12, 
-                    att_type='shuffle',
-                    att_ckpt=False,
-                    ffn_ckpt=False).cuda().train()
-    # torch.save(net.state_dict(), 'model_shuffle.pth')
-    # summary(net, (3,10,128,128))
-    # summary(net, (3,20,128,128))
-    # 22.9528 1584~12f 
-    with torch.no_grad():
-        s = time.time()
-        for i in range(1):
-            inputs = torch.randn(1,3,12,256,256).cuda()
-            print('{:>16s} : {:<.4f} [M]'.format('#Params', sum(map(lambda x: x.numel(), net.parameters())) / 10 ** 6))
-            flops = FlopCountAnalysis(net, inputs)
-            print(flop_count_table(flops))
-            print(flops.total())
-            # net(inputs)
-        print(time.time()-s)

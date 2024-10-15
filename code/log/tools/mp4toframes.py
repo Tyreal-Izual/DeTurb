@@ -34,4 +34,4 @@ def video_to_images(video_path, output_folder):
 
 
 # Usage
-video_to_images("C:\\Users\\Zouzh\\Desktop\\Frederick_Zou Individual Project\image\\real-world example\\realworldexample\\1.mp4", "C:\\Users\\Zouzh\\Desktop\\New folder (2)")
+video_to_images("C:\\Users\\Zouzh\\Desktop\\Frederick_Zou Individual Project\\image\\CLEAR\\a\\turb\\Airport.mp4", "C:\\Users\\Zouzh\\Desktop\\Frederick_Zou Individual Project\\image\\CLEAR\\a\\static\\Airport")

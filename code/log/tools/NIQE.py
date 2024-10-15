@@ -60,7 +60,7 @@ def main(folder1, folder2, folder3):
 
 if __name__ == '__main__':
     # Specify the paths to the three folders
-    folder1 = 'C:\\Users\\Zouzh\\Desktop\\New folder (5)'
-    folder2 = 'C:\\Users\\Zouzh\\Desktop\\New folder (5)'
-    folder3 = 'C:\\Users\\Zouzh\\Desktop\\New folder (4)'  # Add path for the third folder here
+    folder1 = "C:\\Users\\Zouzh\\Desktop\\1"
+    folder2 = "C:\\Users\\Zouzh\\Desktop\\3"
+    folder3 = "C:\\Users\\Zouzh\\Desktop\\5"  # Add path for the third folder here
     main(folder1, folder2, folder3)

@@ -47,8 +47,8 @@ def calculate_metrics(frames1, frames2):
 
 
 # Load frames from videos
-frames_video1 = load_video_frames("C:\\Users\\Zouzh\\Desktop\\Frederick_Zou Individual Project\\image\\CLEAR\\gt\\SecretBase.mp4")
-frames_video2 = load_video_frames("C:\\Users\\Zouzh\\Desktop\\Frederick_Zou Individual Project\\image\\CLEAR\\out\\SecretBase.mp4")
+frames_video1 = load_video_frames("C:\\Users\\Zouzh\\Desktop\\Frederick_Zou Individual Project\\image\\CLEAR\\a\\gt\\Airport.mp4")
+frames_video2 = load_video_frames("C:\\Users\\Zouzh\\Desktop\\Frederick_Zou Individual Project\\image\\CLEAR\\tmt\\Airport.mp4")
 
 # Calculate metrics
 avg_ssim, avg_psnr, avg_lpips = calculate_metrics(frames_video1, frames_video2)

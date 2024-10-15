@@ -63,6 +63,11 @@ class Deconv3D_Block(nn.Module):
                                    output_padding=(0, 1, 1), groups=inp_feat, bias=True),
                 nn.Conv3d(in_channels=inp_feat, out_channels=out_feat, kernel_size=1),
                 nn.GELU())
+        elif conv_type == 'deform':
+            self.deconv = nn.Sequential(
+                norm(inp_feat),
+                DeformConv3D_Block(inp_feat, out_feat, kernel_size=kernel, stride=(1, stride, stride), padding=padding),
+                nn.GELU())
 
     def forward(self, x):
         return self.deconv(x)
@@ -152,10 +157,16 @@ class Conv3D_Block(nn.Module):
 
     def forward(self, x):
         res = x
-        if not self.residual:
-            return self.conv2(self.conv1(x))
+        x = self.conv1(x)
+        x = self.conv2(x)
+
+        if self.residual is not None:
+            res = self.residual_upsampler(res)
+            if res.shape != x.shape:
+                res = F.interpolate(res, size=x.shape[2:], mode='trilinear', align_corners=True)
+            return x + res
         else:
-            return self.conv2(self.conv1(x)) + self.residual_upsampler(res)
+            return x
 
 
 # class FeatureAlign(nn.Module):
@@ -370,7 +381,6 @@ def add_noise(img, sigma):
 class UNet3D(nn.Module):
     def __init__(self, num_channels=3, feat_channels=[64, 256, 256, 512], norm='BN', conv_type='normal',
                  residual='conv', noise=0):
-        # residual: conv for residual input x through 1*1 conv across every layer for downsampling, None for removal of residuals
         super(UNet3D, self).__init__()
 
         # Encoder downsamplers
@@ -432,21 +442,24 @@ class UNet3D(nn.Module):
         base = self.conv_blk4(x_low3)
 
         # Decoder part
-
         d3 = torch.cat([self.deconv_blk3(base), x3], dim=1)
         d_high3 = self.dec_conv_blk3(d3)
+
         d2 = torch.cat([self.deconv_blk2(d_high3), x2], dim=1)
         d_high2 = self.dec_conv_blk2(d2)
+
         d1 = torch.cat([self.deconv_blk1(d_high2), x1], dim=1)
         d_high1 = self.dec_conv_blk1(d1)
 
         flow3 = self.out_conv3(d_high3)
         flow2 = self.out_conv2(d_high2)
         flow1 = self.out_conv1(d_high1)
+
         out_3 = TiltWarp(x, self.upsample3(flow3))
         out_2 = TiltWarp(out_3, self.upsample2(flow2))
         out = TiltWarp(out_2, flow1)
         return out
+
 
 def make_level_blk(dim, num_tb, nhead, att, ffn, bias, LN_bias,
                    flow_dim_ratio=0, att_ckpt=False, ffn_ckpt=False, n_frames=10, self_align=True):
@@ -513,7 +526,7 @@ class TMT_MS(nn.Module):
         self.out_residual = out_residual
 
         if self.count:
-            self.unet3d = UNet3D(norm='LN', residual='pool', conv_type='dw')
+            self.unet3d = UNet3D(norm='LN', residual='pool', conv_type='deform')
             self.swin3d = swinUnet_t_3D()
             self.swin_conv = nn.ConvTranspose2d(in_channels=48, out_channels=128, kernel_size=4, stride=4)
         self.getFeature1 = Preprocessing(inp_channels, dim)

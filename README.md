@@ -97,6 +97,10 @@ This project is built upon code from [TMT](https://github.com/xg416/TMT). We hav
 
 This project is based on [TMT](https://github.com/xg416/TMT), which does not specify a license. Our modifications to this project are licensed under the [Apache-2.0 License](https://github.com/Tyreal-Izual/Atmosphere-Turbulence-Mitigation/blob/main/LICENSE).
 
+```bash
+Copyright 2024 Frederick Zou
+```
+
 For more information, please see the [LICENSE](https://github.com/Tyreal-Izual/Atmosphere-Turbulence-Mitigation/blob/main/LICENSE) file.
 
 

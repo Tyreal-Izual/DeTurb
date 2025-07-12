@@ -22,25 +22,39 @@ This project is developed under an Anaconda environment, leveraging Python 3.8.1
 
 ### For Dynamic Scenes
 
-#### Train 1-Stage Model
-```bash
-python train_TMT_1stage.py --batch-size 1 --patch-size 256 --train_path "path of training videos folder" --val_path "path of validation videos folder" --log_path "path to save logging files and images"
-```
-#### Train 2-Stage Model
+#### Full Model Training (Recommended)
+
 ```bash
 python train_TMT_2stage.py --batch-size 1 --patch-size 256 --train_path "path of training videos folder" --val_path "path of validation videos folder" --log_path "path to save logging files and images"
 ```
 
+<details>
+<summary> Train 1-Stage Model </summary>
+
+```bash
+python train_TMT_1stage.py --batch-size 1 --patch-size 256 --train_path "path of training videos folder" --val_path "path of validation videos folder" --log_path "path to save logging files and images"
+```
+</details>
+
+
 ### For Static Scenes
 
-#### Train 1-Stage Model
-```bash
-python train_TMT_1static.py --batch-size 1 --patch-size 256 --train_path "path of training imgs folder" --val_path "path of validation imgs folder" --log_path "path to save logging files and images"
-```
-#### Train 2-Stage Model
+#### Full Model Training (Recommended)
 ```bash
 python train_TMT_2static.py --batch-size 1 --patch-size 256 --train_path "path of training imgs folder" --val_path "path of validation imgs folder" --log_path "path to save logging files and images"
 ```
+
+<details>
+<summary> Train 1-Stage Model </summary>
+
+```bash
+python train_TMT_1static.py --batch-size 1 --patch-size 256 --train_path "path of training imgs folder" --val_path "path of validation imgs folder" --log_path "path to save logging files and images"
+```
+
+```bash
+```
+</details>
+
 
 ### Note
 Please change the absolute path of `model` folder in file `code/model/TMT_DC.py` and `code/model/TMT_DC2.py` when you training. (should be line 11 and 13, shown as `sys.path.append('C:\\Users\\Zouzh\\Desktop\\IP\\code\\model')`)  
@@ -49,27 +63,37 @@ If encountering a CUDA out of memory error, reduce the patch size to no less tha
 
 
 ## Video Reconstruction (single video)
-#### 1-Stage Model
-```bash
-python video_inference.py --input_path 'path of input video' --out_path 'path of output video' --model_path 'Load model from a .pth file' --save_video
-```
-#### 2-Stage Model
+
+#### Full Stage Model
 ```bash
 python video_inference2.py --input_path 'path of input video' --out_path 'path of output video' --model_path 'Load model from a .pth file' --save_video
 ```
+
+<details>
+<summary> 1-Stage Model </summary>
+
+```bash
+python video_inference.py --input_path 'path of input video' --out_path 'path of output video' --model_path 'Load model from a .pth file' --save_video
+```
+</details>
+
+
 ### Note
 For the `out_path`, please remember to contain the output file name you want, for example: `'code/log/out.mp4'` 
 
 ## Video Reconstruction (videos in folder)
-#### 1-Stage Model
-```bash
-python video_inferencefolder.py --input_path 'path of input video' --out_path 'path of output video' --model_path 'Load model from a .pth file' --save_video
-```
+
 #### 2-Stage Model
 ```bash
 python video_inferencefolder2.py --input_path 'path of input video' --out_path 'path of output video' --model_path 'Load model from a .pth file' --save_video
 ```
+<details>
+<summary> 1-Stage Model </summary>
 
+```bash
+python video_inferencefolder.py --input_path 'path of input video' --out_path 'path of output video' --model_path 'Load model from a .pth file' --save_video
+```
+</details>
 
 
 ## Evaluation

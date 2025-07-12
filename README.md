@@ -83,7 +83,7 @@ For the `out_path`, please remember to contain the output file name you want, fo
 
 ## Video Reconstruction (videos in folder)
 
-#### 2-Stage Model
+#### Full Stage Model
 ```bash
 python video_inferencefolder2.py --input_path 'path of input video' --out_path 'path of output video' --model_path 'Load model from a .pth file' --save_video
 ```

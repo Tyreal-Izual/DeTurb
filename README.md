@@ -35,24 +35,44 @@ For Static scenes, use `configs/static.json` and `weights/static.pth`. Output vi
 
 ## Training
 
-Set your local paths and run:
+Set your local data paths:
 
 ```bash
 export DYNAMIC_DATA_ROOT=/path/to/Deturb_dataset/dynamic
-torchrun --standalone --nproc_per_node=4 -m deturb.cli.train \
-  --config configs/dynamic.json --manifest-path /path/to/dynamic.json
+export STATIC_DATA_ROOT=/path/to/Deturb_dataset/static
 ```
 
-For Static:
+### Single GPU
 
 ```bash
-export STATIC_DATA_ROOT=/path/to/Deturb_dataset/static
-torchrun --standalone --nproc_per_node=4 -m deturb.cli.train \
+# Dynamic
+python -m deturb.cli.train \
+  --config configs/dynamic.json --manifest-path /path/to/dynamic.json \
+  --batch-size 4
+
+# Static
+python -m deturb.cli.train \
   --config configs/static.json --manifest-path /path/to/static.json \
-  --load weights/dynamic.pth --finetune
+  --batch-size 4 --load weights/dynamic.pth --finetune
 ```
 
-Use `--load /path/to/latest.pth` without `--finetune` to resume. Config paths are relative to the JSON file; command-line paths are relative to the current directory. Outputs are saved under `outputs/`.
+### Multiple GPUs
+
+```bash
+# Dynamic: 4 GPUs
+torchrun --standalone --nproc_per_node=4 -m deturb.cli.train \
+  --config configs/dynamic.json --manifest-path /path/to/dynamic.json \
+  --batch-size 1
+
+# Static: 4 GPUs
+torchrun --standalone --nproc_per_node=4 -m deturb.cli.train \
+  --config configs/static.json --manifest-path /path/to/static.json \
+  --batch-size 1 --load weights/dynamic.pth --finetune
+```
+
+`--batch-size` is per GPU. Both examples use global batch 4: one GPU × 4 or four GPUs × 1. Single-GPU training requires more memory per GPU; reducing the batch size changes the global batch.
+
+Use `--load /path/to/latest.pth` without `--finetune` to resume, keeping the same GPU count and per-GPU batch size. Config paths are relative to the JSON file; command-line paths are relative to the current directory. Outputs are saved under `outputs/`.
 
 ## Evaluation
 

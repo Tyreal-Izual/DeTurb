@@ -1,0 +1,4 @@
+include LICENSE NOTICE.md
+recursive-include configs *.json
+recursive-include weights *.md *.json
+include weights/SHA256SUMS

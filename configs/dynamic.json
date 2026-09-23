@@ -1,0 +1,168 @@
+{
+  "model": {
+    "contract": {
+      "model_id": "deturb_v2_clip",
+      "input_frames": 12,
+      "reference_index": 6,
+      "input_channels": 3,
+      "output_channels": 3,
+      "tensor_layout": "BCTHW",
+      "output_mode": "full_clip",
+      "temporal_padding": "replicate"
+    },
+    "registration": {
+      "encoder_channels": [
+        64,
+        256,
+        256,
+        512
+      ],
+      "decoder_channels": [
+        256,
+        128,
+        64
+      ],
+      "encoder_kernels": [
+        [
+          3,
+          7,
+          7
+        ],
+        [
+          3,
+          7,
+          7
+        ],
+        [
+          3,
+          5,
+          5
+        ],
+        [
+          3,
+          3,
+          3
+        ]
+      ],
+      "decoder_kernel": [
+        3,
+        3,
+        3
+      ],
+      "flow_kernel": [
+        3,
+        3,
+        3
+      ],
+      "deform_groups": [
+        1,
+        1,
+        1
+      ],
+      "sampling_chunk_size": 16,
+      "activation": "leaky_relu",
+      "flow_padding_mode": "border",
+      "align_corners": false,
+      "zero_reference_flow": false,
+      "upsample_mode": "nearest_conv",
+      "post_warp_kernel": [
+        3,
+        7,
+        7
+      ]
+    },
+    "fusion": {
+      "stem_channels": 32,
+      "encoder_channels": [
+        64,
+        128,
+        256,
+        512
+      ],
+      "decoder_channels": [
+        256,
+        128,
+        64
+      ],
+      "encoder_depths": [
+        2,
+        2,
+        6,
+        2
+      ],
+      "decoder_depths": [
+        6,
+        2,
+        2
+      ],
+      "encoder_heads": [
+        2,
+        4,
+        8,
+        16
+      ],
+      "decoder_heads": [
+        8,
+        4,
+        2
+      ],
+      "window_size": [
+        3,
+        8,
+        8
+      ],
+      "mlp_ratio": 4.0,
+      "dropout": 0.0,
+      "attention_dropout": 0.0,
+      "qkv_bias": true,
+      "relative_position_bias": true,
+      "spatial_padding_mode": "replicate",
+      "output_residual": false,
+      "attention_mask_mode": "strict"
+    }
+  },
+  "loss": {
+    "charbonnier_epsilon": 0.001,
+    "final_weight": 1.0,
+    "alignment_weight": 1.0,
+    "alignment_stage_weights": [
+      0.6,
+      0.3,
+      0.1
+    ],
+    "edge_weight": 0.05,
+    "edge_start_iteration": 300000
+  },
+  "train": {
+    "train_path": "${DYNAMIC_DATA_ROOT}/train",
+    "val_path": "${DYNAMIC_DATA_ROOT}/test",
+    "log_path": "../outputs/dynamic",
+    "run_name": "dynamic",
+    "batch_size": 1,
+    "patch_size": 128,
+    "num_frames": 12,
+    "num_workers": 4,
+    "data_order": "indexed",
+    "prefetch_factor": 2,
+    "persistent_workers": true,
+    "iters": 400000,
+    "lr": 0.0001,
+    "weight_decay": 0.0,
+    "log_frequency": 100,
+    "metric_frequency": 100,
+    "image_frequency": 500,
+    "val_preview_frequency": 250,
+    "print_period": 1000,
+    "val_period": 5000,
+    "task": "turb",
+    "device": "auto",
+    "amp_dtype": "none",
+    "seed": 42,
+    "max_train_samples": 0,
+    "max_val_samples": 0,
+    "manifest_path": "../manifests/dynamic.json",
+    "stop_after_iters": 0,
+    "data_layout": "paired_turb",
+    "dataset_name": "Deturb dataset"
+  }
+}

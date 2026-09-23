@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+message: "If you use DeTurb, please cite the following paper."
+title: "DeTurb: atmospheric turbulence mitigation with deformable 3D convolutions and 3D Swin transformers"
+type: software
+version: 0.1.0
+authors:
+  - family-names: Zou
+    given-names: Zhicheng
+  - family-names: Anantrasirichai
+    given-names: Nantheera
+preferred-citation:
+  type: conference-paper
+  title: "DeTurb: atmospheric turbulence mitigation with deformable 3D convolutions and 3D Swin transformers"
+  authors:
+    - family-names: Zou
+      given-names: Zhicheng
+    - family-names: Anantrasirichai
+      given-names: Nantheera
+  year: 2024
+  conference:
+    name: Asian Conference on Computer Vision
+  start: 904
+  end: 921

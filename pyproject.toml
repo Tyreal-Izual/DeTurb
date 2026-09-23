@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "deturb"
+version = "0.1.0"
+description = "DeTurb: multi-frame atmospheric turbulence restoration"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {file = "LICENSE"}
+dependencies = ["torch>=2.7,<3", "torchvision>=0.22,<1", "numpy>=1.26,<3", "opencv-python-headless>=4.10,<5", "Pillow>=10"]
+
+[project.optional-dependencies]
+metrics = ["lpips==0.1.4"]
+
+[project.scripts]
+deturb-train = "deturb.cli.train:entrypoint"
+deturb-infer = "deturb.cli.infer:main"
+deturb-evaluate = "deturb.cli.evaluate:main"
+deturb-metrics = "deturb.cli.metrics:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

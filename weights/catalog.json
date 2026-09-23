@@ -1,0 +1,25 @@
+{
+  "status": "published",
+  "parameters": 71555226,
+  "checkpoints": [
+    {
+      "name": "Dynamic",
+      "config": "configs/dynamic.json",
+      "filename": "dynamic.pth",
+      "original_checkpoint_sha256": "4397e4dee0f07ca5803ce51f82d829d951e31a25210424374ba690244f8d073c",
+      "download_url": "https://github.com/Tyreal-Izual/DeTurb/releases/download/v0.1.0/dynamic.pth",
+      "sha256": "d9ce334fed6f32784be90da1d31e785fcd1ab55a66dada773274d51cac85f443",
+      "bytes": 286395919
+    },
+    {
+      "name": "Static",
+      "config": "configs/static.json",
+      "filename": "static.pth",
+      "original_checkpoint_sha256": "004af4029997d5d77e2ff89812fed22bff7b3ddb4974b565005153d159f4937f",
+      "download_url": "https://github.com/Tyreal-Izual/DeTurb/releases/download/v0.1.0/static.pth",
+      "sha256": "cd81950559722be7e159804dc7d1acb4531cab9160a4fe0af7445f45d482ab80",
+      "bytes": 286395501
+    }
+  ],
+  "release": "https://github.com/Tyreal-Izual/DeTurb/releases/tag/v0.1.0"
+}

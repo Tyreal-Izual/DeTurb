@@ -1,7 +1,7 @@
-# Suggested pinned metric environment; select the PyTorch build for your CUDA platform.
-# Recorded metrics used torch 2.7.1, OpenCV 4.12.0 and lpips 0.1.4.
-torch==2.7.1
-torchvision==0.22.1
+# Patched metric environment; select the PyTorch build for your CUDA platform.
+# Historical recorded metrics used torch 2.7.1, OpenCV 4.12.0 and lpips 0.1.4.
+torch==2.14.1
+torchvision==0.29.1
 numpy==2.2.6
 opencv-python-headless==4.12.0.88
 lpips==0.1.4

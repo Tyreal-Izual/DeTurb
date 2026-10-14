@@ -6,7 +6,9 @@ Atmospheric turbulence in long-range imaging significantly degrades the quality 
 
 ## Installation
 
-Python 3.10+ with PyTorch. NVIDIA CUDA and CPU are supported; no custom CUDA extension is required.
+Python 3.10+ with PyTorch 2.14.1+ and torchvision 0.29.1+. NVIDIA CUDA and CPU are supported; no custom CUDA extension is required.
+
+For CUDA, install a [matching PyTorch build](https://pytorch.org/get-started/locally/) for your driver before installing DeTurb.
 
 ```bash
 conda create -n deturb python=3.11 -y
